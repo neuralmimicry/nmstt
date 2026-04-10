@@ -1,0 +1,30 @@
+[Unit]
+Description=Refiner STT (Rust, user service)
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=120
+StartLimitBurst=20
+
+[Service]
+Type=simple
+WorkingDirectory=%h/Developer/neuralmimicry/rag_demo/stt_rust
+EnvironmentFile=-%h/.config/refiner/stt.env
+Environment=RUST_LOG=info
+Environment=RUST_BACKTRACE=1
+Environment=REFINER_STT_MODEL=%h/Developer/neuralmimicry/rag_demo/stt_rust/models/ggml-base.en.bin
+Environment=REFINER_STT_BIND=127.0.0.1:7079
+Environment=REFINER_STT_LANG=en-GB
+Environment=REFINER_STT_THREADS=2
+Environment=REFINER_STT_WORKERS=4
+Environment=REFINER_STT_MAX_AUDIO_BYTES=8000000
+ExecStart=/usr/bin/env bash -lc './target/release/refiner-stt --model "${REFINER_STT_MODEL}" --bind "${REFINER_STT_BIND}" --lang "${REFINER_STT_LANG}" --threads "${REFINER_STT_THREADS}" --workers "${REFINER_STT_WORKERS}" --max-audio-bytes "${REFINER_STT_MAX_AUDIO_BYTES}"'
+NoNewPrivileges=true
+PrivateTmp=true
+LimitNOFILE=65536
+Restart=always
+RestartSec=2
+TimeoutStartSec=120
+TimeoutStopSec=30
+
+[Install]
+WantedBy=default.target

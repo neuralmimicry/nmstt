@@ -1,0 +1,32 @@
+[
+{
+  "directory": "/home/pbisaacs/Developer/neuralmimicry/nmstt/target/debug/build/whisper-rs-sys-95762fc6959d0b3f/out/build",
+  "command": "/usr/bin/cc -D_GNU_SOURCE -D_XOPEN_SOURCE=600 -I/home/pbisaacs/Developer/neuralmimicry/nmstt/target/debug/build/whisper-rs-sys-95762fc6959d0b3f/out/whisper.cpp/.  -ffunction-sections -fdata-sections -fPIC -m64 -w -Werror=vla -mavx -mavx2 -mfma -mf16c -O2 -g -DNDEBUG -o CMakeFiles/whisper.dir/ggml.c.o -c /home/pbisaacs/Developer/neuralmimicry/nmstt/target/debug/build/whisper-rs-sys-95762fc6959d0b3f/out/whisper.cpp/ggml.c",
+  "file": "/home/pbisaacs/Developer/neuralmimicry/nmstt/target/debug/build/whisper-rs-sys-95762fc6959d0b3f/out/whisper.cpp/ggml.c",
+  "output": "CMakeFiles/whisper.dir/ggml.c.o"
+},
+{
+  "directory": "/home/pbisaacs/Developer/neuralmimicry/nmstt/target/debug/build/whisper-rs-sys-95762fc6959d0b3f/out/build",
+  "command": "/usr/bin/cc -D_GNU_SOURCE -D_XOPEN_SOURCE=600 -I/home/pbisaacs/Developer/neuralmimicry/nmstt/target/debug/build/whisper-rs-sys-95762fc6959d0b3f/out/whisper.cpp/.  -ffunction-sections -fdata-sections -fPIC -m64 -w -Werror=vla -mavx -mavx2 -mfma -mf16c -O2 -g -DNDEBUG -o CMakeFiles/whisper.dir/ggml-alloc.c.o -c /home/pbisaacs/Developer/neuralmimicry/nmstt/target/debug/build/whisper-rs-sys-95762fc6959d0b3f/out/whisper.cpp/ggml-alloc.c",
+  "file": "/home/pbisaacs/Developer/neuralmimicry/nmstt/target/debug/build/whisper-rs-sys-95762fc6959d0b3f/out/whisper.cpp/ggml-alloc.c",
+  "output": "CMakeFiles/whisper.dir/ggml-alloc.c.o"
+},
+{
+  "directory": "/home/pbisaacs/Developer/neuralmimicry/nmstt/target/debug/build/whisper-rs-sys-95762fc6959d0b3f/out/build",
+  "command": "/usr/bin/cc -D_GNU_SOURCE -D_XOPEN_SOURCE=600 -I/home/pbisaacs/Developer/neuralmimicry/nmstt/target/debug/build/whisper-rs-sys-95762fc6959d0b3f/out/whisper.cpp/.  -ffunction-sections -fdata-sections -fPIC -m64 -w -Werror=vla -mavx -mavx2 -mfma -mf16c -O2 -g -DNDEBUG -o CMakeFiles/whisper.dir/ggml-backend.c.o -c /home/pbisaacs/Developer/neuralmimicry/nmstt/target/debug/build/whisper-rs-sys-95762fc6959d0b3f/out/whisper.cpp/ggml-backend.c",
+  "file": "/home/pbisaacs/Developer/neuralmimicry/nmstt/target/debug/build/whisper-rs-sys-95762fc6959d0b3f/out/whisper.cpp/ggml-backend.c",
+  "output": "CMakeFiles/whisper.dir/ggml-backend.c.o"
+},
+{
+  "directory": "/home/pbisaacs/Developer/neuralmimicry/nmstt/target/debug/build/whisper-rs-sys-95762fc6959d0b3f/out/build",
+  "command": "/usr/bin/cc -D_GNU_SOURCE -D_XOPEN_SOURCE=600 -I/home/pbisaacs/Developer/neuralmimicry/nmstt/target/debug/build/whisper-rs-sys-95762fc6959d0b3f/out/whisper.cpp/.  -ffunction-sections -fdata-sections -fPIC -m64 -w -Werror=vla -mavx -mavx2 -mfma -mf16c -O2 -g -DNDEBUG -o CMakeFiles/whisper.dir/ggml-quants.c.o -c /home/pbisaacs/Developer/neuralmimicry/nmstt/target/debug/build/whisper-rs-sys-95762fc6959d0b3f/out/whisper.cpp/ggml-quants.c",
+  "file": "/home/pbisaacs/Developer/neuralmimicry/nmstt/target/debug/build/whisper-rs-sys-95762fc6959d0b3f/out/whisper.cpp/ggml-quants.c",
+  "output": "CMakeFiles/whisper.dir/ggml-quants.c.o"
+},
+{
+  "directory": "/home/pbisaacs/Developer/neuralmimicry/nmstt/target/debug/build/whisper-rs-sys-95762fc6959d0b3f/out/build",
+  "command": "/usr/bin/c++ -D_GNU_SOURCE -D_XOPEN_SOURCE=600 -I/home/pbisaacs/Developer/neuralmimicry/nmstt/target/debug/build/whisper-rs-sys-95762fc6959d0b3f/out/whisper.cpp/.  -ffunction-sections -fdata-sections -fPIC -m64 -w -O2 -g -DNDEBUG -o CMakeFiles/whisper.dir/whisper.cpp.o -c /home/pbisaacs/Developer/neuralmimicry/nmstt/target/debug/build/whisper-rs-sys-95762fc6959d0b3f/out/whisper.cpp/whisper.cpp",
+  "file": "/home/pbisaacs/Developer/neuralmimicry/nmstt/target/debug/build/whisper-rs-sys-95762fc6959d0b3f/out/whisper.cpp/whisper.cpp",
+  "output": "CMakeFiles/whisper.dir/whisper.cpp.o"
+}
+]

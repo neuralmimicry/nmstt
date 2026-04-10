@@ -1,0 +1,785 @@
+openapi: 3.0.3
+info:
+  title: NMSTT Service
+  description: |
+    **NMSTT** is a high-performance on-premises speech-to-text service powered by Whisper.cpp.
+
+    ## Features
+    - 🎤 **Multi-format Audio**: Supports WAV, MP3, OGG, WEBM, FLAC, and more
+    - 🌍 **Multi-language**: 99+ languages with automatic detection
+    - 🤖 **Gesture Planning**: BSL and semantic gesticulation generation
+    - 🎭 **Avatar Motion**: Full-body keyframe animation for avatars
+    - 👥 **Collaboration Mode**: Multi-speaker detection and diarization
+    - 🔊 **Audio Analysis**: SNR, noise detection, speech confidence metrics
+    - ⚡ **High Performance**: Rust/Axum with concurrent request handling
+    - 🛡️ **Secure**: Token-based authentication, configurable limits
+
+    ## Architecture
+    - **Runtime**: Tokio async runtime with bounded concurrency
+    - **STT Engine**: whisper.rs (whisper.cpp bindings)
+    - **Audio**: Symphonia decoder + Rubato resampler
+    - **Concurrency**: Worker pool with round-robin load balancing
+
+  version: 1.0.0
+  contact:
+    name: NeuralMimicry Support
+    url: https://neuralmimicry.ai
+    email: support@neuralmimicry.ai
+
+servers:
+  - url: http://localhost:7079
+    description: Local STT service
+  - url: http://stt.neuralmimicry.internal:7079
+    description: Internal STT service
+
+tags:
+  - name: Health
+    description: Service health and diagnostics
+  - name: Transcription
+    description: Speech-to-text transcription
+  - name: Gesture
+    description: Gesture and avatar motion planning
+
+components:
+  securitySchemes:
+    tokenAuth:
+      type: apiKey
+      in: header
+      name: X-STT-Token
+      description: STT service authentication token
+
+  schemas:
+    HealthResponse:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [ok]
+          example: ok
+
+    TranscribeResponse:
+      type: object
+      required: [status, text, lang, gesture_mode, avatar_mode]
+      properties:
+        status:
+          type: string
+          enum: [ok]
+          example: ok
+        text:
+          type: string
+          description: |
+            Original transcribed text with entity canonicalization.
+            This is always in English word order, regardless of gesture_mode.
+            Use this for display in English/gesticulation mode.
+          example: "Tell me about AARNN and NeuralMimicry security."
+        lang:
+          type: string
+          description: Language code used for transcription
+          example: "en-GB"
+        gesture_mode:
+          type: string
+          enum: [gesticulation, bsl]
+          description: |
+            Gesture generation mode:
+            - `gesticulation`: Semantic conversational gestures
+            - `bsl`: British Sign Language signing
+          example: gesticulation
+        avatar_mode:
+          type: string
+          enum: [chat, office]
+          description: |
+            Avatar presentation mode:
+            - `chat`: Casual chat mode (lower amplitude)
+            - `office`: Professional office mode (higher amplitude)
+          example: chat
+        bsl_text:
+          type: string
+          description: |
+            **BSL-transformed text** (only present when `gesture_mode` is `bsl`).
+
+            Text reordered according to BSL grammar rules:
+            - **No articles** (a, an, the)
+            - **No "to be" verbs** (is, are, was, were)
+            - **Time indicators at start** (yesterday, today, tomorrow, now)
+            - **Question words at end** (what, where, when, why, who, how)
+            - **No auxiliaries in questions** (do, does, did)
+            - **Topic-comment structure**
+
+            **Frontend Integration:**
+            When `gesture_mode` is `bsl`, use `bsl_text` for:
+            - Display synchronization with avatar motion
+            - Word-level timing via `gesture_timeline`
+            - BSL signing animation
+
+            When `gesture_mode` is `gesticulation`, use `text` field.
+
+            **Example transformations:**
+            ```
+            English: "The cat is on the mat."
+            BSL: "cat on mat"
+
+            English: "What is your name?"
+            BSL: "your name What"
+
+            English: "I went to the shop yesterday."
+            BSL: "yesterday I went shop"
+            ```
+          example: "Tell me AARNN NeuralMimicry security"
+        avatar_motion:
+          $ref: '#/components/schemas/AvatarMotion'
+        gesture_summary:
+          $ref: '#/components/schemas/GestureSummary'
+        gesture_timeline:
+          type: array
+          items:
+            $ref: '#/components/schemas/GestureTimelineEntry'
+        audio_analysis:
+          $ref: '#/components/schemas/AudioAnalysis'
+        speaker_segments:
+          type: array
+          description: Multi-speaker segments (only in collaboration mode)
+          items:
+            $ref: '#/components/schemas/SpeakerSegment'
+        collaboration_mode:
+          type: boolean
+          description: Whether collaboration/multi-speaker mode was enabled
+
+    AvatarMotion:
+      type: object
+      required: [duration_ms, keyframes]
+      description: Full-body avatar animation with keyframe poses
+      properties:
+        duration_ms:
+          type: integer
+          minimum: 700
+          maximum: 18000
+          description: Total motion duration in milliseconds
+          example: 2450
+        keyframes:
+          type: array
+          description: Array of timed pose keyframes
+          items:
+            $ref: '#/components/schemas/MotionKeyframe'
+
+    MotionKeyframe:
+      type: object
+      required: [t, pose]
+      properties:
+        t:
+          type: integer
+          minimum: 0
+          description: Keyframe timestamp in milliseconds
+          example: 640
+        pose:
+          $ref: '#/components/schemas/Pose'
+
+    Pose:
+      type: object
+      required: [headYaw, headPitch, spineLean, shoulderRise, leftShoulderPitch, rightShoulderPitch, leftShoulderRoll, rightShoulderRoll, leftElbow, rightElbow, leftWristYaw, rightWristYaw, leftHip, rightHip, leftKnee, rightKnee, leftAnkle, rightAnkle, leftHand, rightHand]
+      description: |
+        Full-body humanoid pose with normalized joint angles.
+        All angles are normalized: signed values [-1.0, 1.0], unsigned [0.0, 1.0].
+      properties:
+        headYaw:
+          type: number
+          minimum: -1.0
+          maximum: 1.0
+          example: 0.06
+        headPitch:
+          type: number
+          minimum: -1.0
+          maximum: 1.0
+          example: -0.03
+        spineLean:
+          type: number
+          minimum: -1.0
+          maximum: 1.0
+        shoulderRise:
+          type: number
+          minimum: -1.0
+          maximum: 1.0
+        leftShoulderPitch:
+          type: number
+          minimum: -1.0
+          maximum: 1.0
+        rightShoulderPitch:
+          type: number
+          minimum: -1.0
+          maximum: 1.0
+        leftShoulderRoll:
+          type: number
+          minimum: -1.0
+          maximum: 1.0
+        rightShoulderRoll:
+          type: number
+          minimum: -1.0
+          maximum: 1.0
+        leftElbow:
+          type: number
+          minimum: 0.0
+          maximum: 1.0
+        rightElbow:
+          type: number
+          minimum: 0.0
+          maximum: 1.0
+        leftWristYaw:
+          type: number
+          minimum: -1.0
+          maximum: 1.0
+        rightWristYaw:
+          type: number
+          minimum: -1.0
+          maximum: 1.0
+        leftHip:
+          type: number
+          minimum: -1.0
+          maximum: 1.0
+        rightHip:
+          type: number
+          minimum: -1.0
+          maximum: 1.0
+        leftKnee:
+          type: number
+          minimum: 0.0
+          maximum: 1.0
+        rightKnee:
+          type: number
+          minimum: 0.0
+          maximum: 1.0
+        leftAnkle:
+          type: number
+          minimum: -1.0
+          maximum: 1.0
+        rightAnkle:
+          type: number
+          minimum: -1.0
+          maximum: 1.0
+        leftHand:
+          $ref: '#/components/schemas/HandPose'
+        rightHand:
+          $ref: '#/components/schemas/HandPose'
+
+    HandPose:
+      type: object
+      required: [thumb, index, middle, ring, pinky]
+      description: Hand pose with per-finger curl values [0.0, 1.0]
+      properties:
+        thumb:
+          type: number
+          minimum: 0.0
+          maximum: 1.0
+          example: 0.18
+        index:
+          type: number
+          minimum: 0.0
+          maximum: 1.0
+          example: 0.08
+        middle:
+          type: number
+          minimum: 0.0
+          maximum: 1.0
+          example: 0.08
+        ring:
+          type: number
+          minimum: 0.0
+          maximum: 1.0
+          example: 0.10
+        pinky:
+          type: number
+          minimum: 0.0
+          maximum: 1.0
+          example: 0.14
+
+    GestureSummary:
+      type: object
+      required: [style, token_count]
+      properties:
+        style:
+          type: string
+          enum: [semantic_gesticulation, bsl_signing]
+          example: semantic_gesticulation
+        token_count:
+          type: integer
+          minimum: 0
+          description: Number of words/tokens in gesture timeline
+          example: 8
+
+    GestureTimelineEntry:
+      type: object
+      required: [word, intent, template, start_ms, end_ms]
+      description: Per-word gesture annotation
+      properties:
+        word:
+          type: string
+          description: Transcribed word
+          example: "hello"
+        intent:
+          type: string
+          enum: [greeting, question, affirm, negate, polite, directional, action, topic, number, content, filler]
+          description: Semantic intent classification
+          example: greeting
+        template:
+          type: string
+          description: Gesture template applied
+          example: greeting
+        start_ms:
+          type: integer
+          minimum: 0
+          description: Word start time in milliseconds
+          example: 80
+        end_ms:
+          type: integer
+          minimum: 0
+          description: Word end time in milliseconds
+          example: 720
+
+    AudioAnalysis:
+      type: object
+      required: [speech_ratio, speech_confidence, noise_level, noise_rms, speech_rms, snr_db, speaker_count_estimate, speaker_turn_count, background_noise_detected, collaboration_likely]
+      description: Audio quality and speaker detection metrics
+      properties:
+        speech_ratio:
+          type: number
+          minimum: 0.0
+          maximum: 1.0
+          description: Fraction of frames classified as speech
+          example: 0.68
+        speech_confidence:
+          type: number
+          minimum: 0.0
+          maximum: 1.0
+          description: Overall speech detection confidence
+          example: 0.82
+        noise_level:
+          type: string
+          enum: [low, moderate, high]
+          description: Noise level classification
+          example: low
+        noise_rms:
+          type: number
+          minimum: 0.0
+          description: Background noise RMS amplitude
+          example: 0.009
+        speech_rms:
+          type: number
+          minimum: 0.0
+          description: Speech signal RMS amplitude
+          example: 0.031
+        snr_db:
+          type: number
+          description: Signal-to-noise ratio in decibels
+          example: 13.0
+        speaker_count_estimate:
+          type: integer
+          minimum: 1
+          maximum: 255
+          description: Estimated number of speakers
+          example: 2
+        speaker_turn_count:
+          type: integer
+          minimum: 0
+          description: Number of detected speaker turns
+          example: 3
+        background_noise_detected:
+          type: boolean
+          description: Whether significant background noise was detected
+          example: false
+        collaboration_likely:
+          type: boolean
+          description: Whether audio suggests multi-speaker collaboration
+          example: true
+
+    SpeakerSegment:
+      type: object
+      required: [speaker, text, start_ms, end_ms, confidence]
+      description: Speaker-attributed transcript segment
+      properties:
+        speaker:
+          type: string
+          pattern: '^S[0-9]+$'
+          description: Speaker identifier (S1, S2, etc.)
+          example: "S1"
+        text:
+          type: string
+          description: Segment transcript
+          example: "Hello, how are you?"
+        start_ms:
+          type: integer
+          minimum: 0
+          description: Segment start time in milliseconds
+          example: 0
+        end_ms:
+          type: integer
+          minimum: 0
+          description: Segment end time in milliseconds
+          example: 1280
+        confidence:
+          type: number
+          minimum: 0.0
+          maximum: 1.0
+          description: Segment attribution confidence
+          example: 0.78
+
+    GesturePlanRequest:
+      type: object
+      required: [text]
+      properties:
+        text:
+          type: string
+          minLength: 1
+          maxLength: 10000
+          description: Input text for gesture planning
+          example: "Welcome to NeuralMimicry. Let me help you with your security needs."
+        gesture_mode:
+          type: string
+          enum: [gesticulation, bsl]
+          description: Gesture mode (default from server config)
+        avatar_mode:
+          type: string
+          enum: [chat, office]
+          description: Avatar mode (default from server config)
+        office_mode:
+          type: boolean
+          description: Shorthand for avatar_mode=office (overrides avatar_mode if present)
+
+    GesturePlanResponse:
+      type: object
+      required: [status, text, gesture_mode, avatar_mode]
+      properties:
+        status:
+          type: string
+          enum: [ok]
+        text:
+          type: string
+          description: Original input text in English word order
+        gesture_mode:
+          type: string
+          enum: [gesticulation, bsl]
+        avatar_mode:
+          type: string
+          enum: [chat, office]
+        bsl_text:
+          type: string
+          description: |
+            BSL-transformed text (only present when `gesture_mode` is `bsl`).
+            See TranscribeResponse.bsl_text for detailed description of transformations.
+            Frontend should use this text for synchronization with BSL signing animations.
+        avatar_motion:
+          $ref: '#/components/schemas/AvatarMotion'
+        gesture_summary:
+          $ref: '#/components/schemas/GestureSummary'
+        gesture_timeline:
+          type: array
+          items:
+            $ref: '#/components/schemas/GestureTimelineEntry'
+
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+          enum: [invalid_audio, audio_too_large, audio_required, unsupported_format, stt_failed, capacity_unavailable, text_required, stt_task_failed]
+          example: invalid_audio
+
+paths:
+  /health:
+    get:
+      summary: Health check
+      description: Returns service health status
+      tags: [Health]
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            text/plain:
+              schema:
+                type: string
+                enum: [ok]
+                example: ok
+
+  /transcribe:
+    post:
+      summary: Transcribe audio
+      description: |
+        Upload audio file for speech-to-text transcription. The service automatically:
+        - Decodes audio (supports WAV, MP3, OGG, WEBM, FLAC, etc.)
+        - Resamples to 16kHz mono
+        - Runs Whisper inference
+        - Canonicalizes domain entities (NeuralMimicry terminology)
+        - Generates gesture motion (if enabled)
+        - Analyzes audio quality and speaker characteristics
+
+        ## Limits
+        - Max audio size: 6MB (configurable via `--max-audio-bytes`)
+        - Concurrent requests: 8 (configurable via workers/concurrency)
+        - Timeout: 30s default (depends on audio length and model size)
+
+        ## Entity Canonicalization
+        The service automatically corrects common transcription errors for NeuralMimicry terminology:
+        - `aaron` → `AARNN` (pronounced "Aaron")
+        - `tracy` → `Tracey` (spelled with 'e')
+        - `isaac`, `isaacs` → `Isaac's` (founder surname)
+        - Common family names (Kirsten, Scarlett, Harriet, etc.)
+
+      tags: [Transcription]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [audio]
+              properties:
+                audio:
+                  type: string
+                  format: binary
+                  description: Audio file (max 6MB by default)
+                lang:
+                  type: string
+                  description: Language code (e.g., en-GB, fr-FR, de-DE)
+                  example: en-GB
+                prompt:
+                  type: string
+                  maxLength: 640
+                  description: |
+                    Context prompt for improved transcription accuracy.
+                    Useful for providing domain-specific terminology, names, or context.
+                    Limited to 640 characters.
+                  example: "NeuralMimicry AARNN Paul Isaac's Tracey security platform"
+                gesture_mode:
+                  type: string
+                  enum: [gesticulation, bsl]
+                  description: Gesture generation mode
+                avatar_mode:
+                  type: string
+                  enum: [chat, office]
+                  description: Avatar presentation mode
+                office_mode:
+                  type: boolean
+                  description: Shorthand for avatar_mode=office
+                collaboration_mode:
+                  type: boolean
+                  description: |
+                    Enable multi-speaker detection and diarization.
+                    Uses Whisper's tinydiarize feature to detect speaker turns
+                    and estimate speaker count.
+            encoding:
+              audio:
+                contentType: audio/wav, audio/mpeg, audio/ogg, audio/webm, audio/flac
+
+      responses:
+        '200':
+          description: Transcription successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TranscribeResponse'
+              example:
+                status: ok
+                text: "Tell me about AARNN and NeuralMimicry security."
+                lang: en-GB
+                gesture_mode: gesticulation
+                avatar_mode: chat
+                avatar_motion:
+                  duration_ms: 2450
+                  keyframes:
+                    - t: 0
+                      pose:
+                        headYaw: 0.0
+                        headPitch: 0.03
+                        spineLean: 0.0
+                        shoulderRise: 0.08
+                        leftShoulderPitch: 0.16
+                        rightShoulderPitch: 0.16
+                        leftShoulderRoll: -0.26
+                        rightShoulderRoll: 0.26
+                        leftElbow: 0.27
+                        rightElbow: 0.27
+                        leftWristYaw: -0.08
+                        rightWristYaw: 0.08
+                        leftHip: 0.0
+                        rightHip: 0.0
+                        leftKnee: 0.2
+                        rightKnee: 0.2
+                        leftAnkle: 0.0
+                        rightAnkle: 0.0
+                        leftHand:
+                          thumb: 0.21
+                          index: 0.14
+                          middle: 0.16
+                          ring: 0.18
+                          pinky: 0.26
+                        rightHand:
+                          thumb: 0.21
+                          index: 0.14
+                          middle: 0.16
+                          ring: 0.18
+                          pinky: 0.26
+                gesture_summary:
+                  style: semantic_gesticulation
+                  token_count: 8
+                audio_analysis:
+                  speech_ratio: 0.68
+                  speech_confidence: 0.82
+                  noise_level: low
+                  noise_rms: 0.009
+                  speech_rms: 0.031
+                  snr_db: 13.0
+                  speaker_count_estimate: 1
+                  speaker_turn_count: 0
+                  background_noise_detected: false
+                  collaboration_likely: false
+                collaboration_mode: false
+
+        '400':
+          description: Invalid audio or parameters
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                invalid_audio:
+                  value:
+                    error: invalid_audio
+                audio_required:
+                  value:
+                    error: audio_required
+                unsupported_format:
+                  value:
+                    error: unsupported_format
+
+        '413':
+          description: Audio file too large
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: audio_too_large
+
+        '500':
+          description: Transcription failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                stt_failed:
+                  value:
+                    error: stt_failed
+                stt_task_failed:
+                  value:
+                    error: stt_task_failed
+
+        '503':
+          description: Service at capacity
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: capacity_unavailable
+
+  /gesture-plan:
+    post:
+      summary: Generate gesture plan
+      description: |
+        Generate avatar motion and gesture timeline from input text.
+        No audio transcription is performed; this endpoint only generates motion.
+
+        ## Gesture Modes
+        - **gesticulation**: Semantic conversational gestures based on word intent
+          - Templates: question, negate, acknowledge, directional, emphasis, subtle, explain
+          - Lower amplitude, natural conversation style
+        - **bsl**: British Sign Language signing
+          - Templates: greeting, question, affirm, negate, polite, topic, action, number, fingerspell
+          - Higher amplitude, formal signing style
+
+        ## Avatar Modes
+        - **chat**: Casual chat mode (50-74% amplitude)
+        - **office**: Professional office mode (76-100% amplitude)
+
+      tags: [Gesture]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GesturePlanRequest'
+            example:
+              text: "Hello, welcome to NeuralMimicry!"
+              gesture_mode: gesticulation
+              avatar_mode: chat
+
+      responses:
+        '200':
+          description: Gesture plan generated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GesturePlanResponse'
+              example:
+                status: ok
+                text: "Hello, welcome to NeuralMimicry!"
+                gesture_mode: gesticulation
+                avatar_mode: chat
+                avatar_motion:
+                  duration_ms: 1820
+                  keyframes:
+                    - t: 0
+                      pose:
+                        headYaw: 0.0
+                        headPitch: 0.03
+                        spineLean: 0.0
+                        shoulderRise: 0.08
+                        leftShoulderPitch: 0.16
+                        rightShoulderPitch: 0.16
+                        leftShoulderRoll: -0.26
+                        rightShoulderRoll: 0.26
+                        leftElbow: 0.27
+                        rightElbow: 0.27
+                        leftWristYaw: -0.08
+                        rightWristYaw: 0.08
+                        leftHip: 0.0
+                        rightHip: 0.0
+                        leftKnee: 0.2
+                        rightKnee: 0.2
+                        leftAnkle: 0.0
+                        rightAnkle: 0.0
+                        leftHand:
+                          thumb: 0.21
+                          index: 0.14
+                          middle: 0.16
+                          ring: 0.18
+                          pinky: 0.26
+                        rightHand:
+                          thumb: 0.21
+                          index: 0.14
+                          middle: 0.16
+                          ring: 0.18
+                          pinky: 0.26
+                gesture_summary:
+                  style: semantic_gesticulation
+                  token_count: 5
+                gesture_timeline:
+                  - word: Hello
+                    intent: greeting
+                    template: acknowledge
+                    start_ms: 80
+                    end_ms: 720
+                  - word: welcome
+                    intent: polite
+                    template: acknowledge
+                    start_ms: 744
+                    end_ms: 1460
+
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: text_required

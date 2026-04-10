@@ -1,0 +1,30 @@
+[Unit]
+Description=NeuralMimicry STT (Rust, user service)
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=120
+StartLimitBurst=20
+
+[Service]
+Type=simple
+WorkingDirectory=%h/Developer/neuralmimicry/nmstt
+EnvironmentFile=-%h/.config/nmstt/nmstt.env
+Environment=RUST_LOG=info
+Environment=RUST_BACKTRACE=1
+Environment=NMSTT_MODEL=%h/Developer/neuralmimicry/nmstt/models/ggml-base.en.bin
+Environment=NMSTT_BIND=127.0.0.1:7079
+Environment=NMSTT_LANG=en-GB
+Environment=NMSTT_THREADS=2
+Environment=NMSTT_WORKERS=4
+Environment=NMSTT_MAX_AUDIO_BYTES=8000000
+ExecStart=/usr/bin/env bash -lc './target/release/nmstt --model "${NMSTT_MODEL}" --bind "${NMSTT_BIND}" --lang "${NMSTT_LANG}" --threads "${NMSTT_THREADS}" --workers "${NMSTT_WORKERS}" --max-audio-bytes "${NMSTT_MAX_AUDIO_BYTES}"'
+NoNewPrivileges=true
+PrivateTmp=true
+LimitNOFILE=65536
+Restart=always
+RestartSec=2
+TimeoutStartSec=120
+TimeoutStopSec=30
+
+[Install]
+WantedBy=default.target

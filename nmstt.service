@@ -1,0 +1,31 @@
+[Unit]
+Description=NeuralMimicry STT (Rust, native arm64)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=nmstt
+Group=nmstt
+WorkingDirectory=/opt/nmstt
+EnvironmentFile=-/etc/default/nmstt
+Environment=RUST_LOG=info
+Environment=RUST_BACKTRACE=1
+Environment=TOKIO_WORKER_THREADS=46
+Environment=NMSTT_MODEL=/opt/nmstt/models/ggml-base.en.bin
+Environment=NMSTT_BIND=127.0.0.1:7079
+Environment=NMSTT_LANG=en-GB
+Environment=NMSTT_THREADS=2
+Environment=NMSTT_WORKERS=23
+Environment=NMSTT_MAX_AUDIO_BYTES=8000000
+ExecStart=/opt/nmstt/nmstt --model ${NMSTT_MODEL} --bind ${NMSTT_BIND} --lang ${NMSTT_LANG} --threads ${NMSTT_THREADS} --workers ${NMSTT_WORKERS} --max-audio-bytes ${NMSTT_MAX_AUDIO_BYTES}
+CPUAffinity=0-45
+TasksMax=8192
+LimitNOFILE=65536
+NoNewPrivileges=true
+PrivateTmp=true
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
