@@ -30,6 +30,7 @@ That keeps browser integrations and the website unchanged while STT runs as an i
 The service now prefers `NMSTT_*` environment variables.
 For migration safety it still accepts the legacy `REFINER_STT_*` names where the binary previously read them directly.
 That means Refiner can switch over incrementally instead of requiring an all-at-once configuration cut-over.
+Legacy `refiner-stt` unit names and `rag_demo/stt_rust` install paths are intentionally no longer shipped from this repository.
 
 ## Persistence model
 
