@@ -1,4 +1,4 @@
-FROM rust:1.88-bookworm AS builder
+FROM docker.io/library/rust:1.88-bookworm AS builder
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         build-essential \
@@ -15,7 +15,7 @@ COPY src ./src
 # arm64 images without tripping over peak memory spikes during release builds.
 RUN cargo build --release -j 1
 
-FROM debian:bookworm-slim
+FROM docker.io/library/debian:bookworm-slim
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/*
