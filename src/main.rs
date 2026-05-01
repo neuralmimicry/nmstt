@@ -100,7 +100,12 @@ struct ErrorResponse {
 #[derive(Deserialize)]
 struct GesturePlanRequest {
     text: String,
-    #[serde(default, alias = "gestureMode", alias = "motion_style", alias = "motionStyle")]
+    #[serde(
+        default,
+        alias = "gestureMode",
+        alias = "motion_style",
+        alias = "motionStyle"
+    )]
     gesture_mode: Option<String>,
     #[serde(default, alias = "avatarMode")]
     avatar_mode: Option<String>,
@@ -341,27 +346,45 @@ async fn main() {
         threads_per_request: threads,
         translate: args.translate,
         max_audio_bytes: args.max_audio_bytes,
-        gesture_enabled: env_flag_any(&["NMSTT_GESTURE_ENABLED", "REFINER_STT_GESTURE_ENABLED"], true),
+        gesture_enabled: env_flag_any(
+            &["NMSTT_GESTURE_ENABLED", "REFINER_STT_GESTURE_ENABLED"],
+            true,
+        ),
         bsl_enabled: env_flag_any(&["NMSTT_BSL_ENABLED", "REFINER_STT_BSL_ENABLED"], true),
-        default_gesture_mode: env_string_any(&["NMSTT_GESTURE_DEFAULT_MODE", "REFINER_STT_GESTURE_DEFAULT_MODE"])
-            .map(|s| s.trim().to_lowercase())
-            .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| "gesticulation".to_string()),
+        default_gesture_mode: env_string_any(&[
+            "NMSTT_GESTURE_DEFAULT_MODE",
+            "REFINER_STT_GESTURE_DEFAULT_MODE",
+        ])
+        .map(|s| s.trim().to_lowercase())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "gesticulation".to_string()),
         default_avatar_mode: env_string_any(&[
             "NMSTT_GESTURE_DEFAULT_AVATAR_MODE",
             "REFINER_STT_GESTURE_DEFAULT_AVATAR_MODE",
         ])
-            .map(|s| s.trim().to_lowercase())
-            .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| "chat".to_string()),
+        .map(|s| s.trim().to_lowercase())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "chat".to_string()),
         builtin_prompt: default_stt_context_prompt(),
-        allow_client_prompt: env_flag_any(&["NMSTT_PROMPT_ALLOW_CLIENT", "REFINER_STT_PROMPT_ALLOW_CLIENT"], false),
+        allow_client_prompt: env_flag_any(
+            &[
+                "NMSTT_PROMPT_ALLOW_CLIENT",
+                "REFINER_STT_PROMPT_ALLOW_CLIENT",
+            ],
+            false,
+        ),
         canonicalize_entities: env_flag_any(
-            &["NMSTT_CANONICALIZE_ENTITIES", "REFINER_STT_CANONICALIZE_ENTITIES"],
+            &[
+                "NMSTT_CANONICALIZE_ENTITIES",
+                "REFINER_STT_CANONICALIZE_ENTITIES",
+            ],
             true,
         ),
         default_collaboration_mode: env_flag_any(
-            &["NMSTT_COLLABORATION_DEFAULT", "REFINER_STT_COLLABORATION_DEFAULT"],
+            &[
+                "NMSTT_COLLABORATION_DEFAULT",
+                "REFINER_STT_COLLABORATION_DEFAULT",
+            ],
             false,
         ),
     };
@@ -1401,18 +1424,34 @@ fn transform_to_bsl_order(text: &str) -> String {
     let mut i = 0;
 
     // Remove common articles and "to be" verbs
-    let skip_words = ["a", "an", "the", "is", "are", "was", "were", "be", "been", "being"];
+    let skip_words = [
+        "a", "an", "the", "is", "are", "was", "were", "be", "been", "being",
+    ];
 
     // Check if question (ends with ?)
     let is_question = text.trim().ends_with('?');
     let mut question_word: Option<String> = None;
 
     // Time indicators - move to front
-    let time_words = ["yesterday", "today", "tomorrow", "now", "later", "before", "after", "morning", "afternoon", "evening", "night"];
+    let time_words = [
+        "yesterday",
+        "today",
+        "tomorrow",
+        "now",
+        "later",
+        "before",
+        "after",
+        "morning",
+        "afternoon",
+        "evening",
+        "night",
+    ];
     let mut time_indicator: Option<String> = None;
 
     while i < words.len() {
-        let word_lower = words[i].trim_matches(|c: char| !c.is_alphanumeric()).to_lowercase();
+        let word_lower = words[i]
+            .trim_matches(|c: char| !c.is_alphanumeric())
+            .to_lowercase();
 
         // Capture time indicators
         if time_words.contains(&word_lower.as_str()) && time_indicator.is_none() {
@@ -1422,7 +1461,10 @@ fn transform_to_bsl_order(text: &str) -> String {
         }
 
         // Capture question words for end placement
-        if is_question && ["what", "where", "when", "why", "who", "how", "which"].contains(&word_lower.as_str()) {
+        if is_question
+            && ["what", "where", "when", "why", "who", "how", "which"]
+                .contains(&word_lower.as_str())
+        {
             question_word = Some(words[i].to_string());
             i += 1;
             continue;
@@ -1533,11 +1575,26 @@ fn plan_gesture_motion(text: &str, gesture_mode: &str, avatar_mode: &str) -> Opt
 
     // Debug logging for first frame pose values
     if let Some(first_frame) = frames.first() {
-        eprintln!("[DEBUG] First keyframe pose values for gesture_mode={}", gesture_mode);
-        eprintln!("  left_shoulder_pitch: {:.3}", first_frame.pose.left_shoulder_pitch);
-        eprintln!("  right_shoulder_pitch: {:.3}", first_frame.pose.right_shoulder_pitch);
-        eprintln!("  left_shoulder_roll: {:.3}", first_frame.pose.left_shoulder_roll);
-        eprintln!("  right_shoulder_roll: {:.3}", first_frame.pose.right_shoulder_roll);
+        eprintln!(
+            "[DEBUG] First keyframe pose values for gesture_mode={}",
+            gesture_mode
+        );
+        eprintln!(
+            "  left_shoulder_pitch: {:.3}",
+            first_frame.pose.left_shoulder_pitch
+        );
+        eprintln!(
+            "  right_shoulder_pitch: {:.3}",
+            first_frame.pose.right_shoulder_pitch
+        );
+        eprintln!(
+            "  left_shoulder_roll: {:.3}",
+            first_frame.pose.left_shoulder_roll
+        );
+        eprintln!(
+            "  right_shoulder_roll: {:.3}",
+            first_frame.pose.right_shoulder_roll
+        );
         eprintln!("  left_elbow: {:.3}", first_frame.pose.left_elbow);
         eprintln!("  right_elbow: {:.3}", first_frame.pose.right_elbow);
     }
@@ -1562,7 +1619,10 @@ fn plan_gesture_motion(text: &str, gesture_mode: &str, avatar_mode: &str) -> Opt
 
 fn default_stt_context_prompt() -> Option<String> {
     if !env_flag_any(
-        &["NMSTT_BUILTIN_CONTEXT_ENABLED", "REFINER_STT_BUILTIN_CONTEXT_ENABLED"],
+        &[
+            "NMSTT_BUILTIN_CONTEXT_ENABLED",
+            "REFINER_STT_BUILTIN_CONTEXT_ENABLED",
+        ],
         true,
     ) {
         return None;
@@ -1571,8 +1631,8 @@ fn default_stt_context_prompt() -> Option<String> {
         "NMSTT_BUILTIN_CONTEXT_PROMPT",
         "REFINER_STT_BUILTIN_CONTEXT_PROMPT",
     ])
-        .map(|v| v.trim().to_string())
-        .filter(|v| !v.is_empty());
+    .map(|v| v.trim().to_string())
+    .filter(|v| !v.is_empty());
     let fallback = "NeuralMimicry terminology: AARNN is pronounced Aaron; Tracey is spelled with an e not Tracy; founder Paul Isaac's; family names Kirsten, Scarlett, Harriet, Melissa, Michael, Christopher, Benjamin, Rebecca.";
     sanitize_prompt_with_limit(configured.as_deref().or(Some(fallback)), 640)
 }
