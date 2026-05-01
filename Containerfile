@@ -9,6 +9,7 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /src
 COPY Cargo.toml Cargo.lock ./
+COPY .cargo ./.cargo
 COPY src ./src
 # Build with a single Cargo job so the RK1 control-plane host can publish
 # arm64 images without tripping over peak memory spikes during release builds.

@@ -1,0 +1,4 @@
+[env]
+# whisper-rs-sys bindgen generation is flaky on our ARM64 CI runner; use the
+# crate's bundled bindings consistently for reproducible builds.
+WHISPER_DONT_GENERATE_BINDINGS = "1"
