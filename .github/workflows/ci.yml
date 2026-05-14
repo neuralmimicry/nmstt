@@ -224,7 +224,7 @@ jobs:
             exit 1
           fi
 
-          short_sha="${GITHUB_SHA::0:7}"
+          short_sha="${GITHUB_SHA:0:7}"
           release_tag=""
 
           if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
