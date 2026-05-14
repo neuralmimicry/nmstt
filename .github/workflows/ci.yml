@@ -396,6 +396,7 @@ jobs:
       packages: write
     strategy:
       fail-fast: false
+      max-parallel: 1
       matrix:
         runner_arch: [X64, ARM64]
 
@@ -423,6 +424,24 @@ jobs:
         run: |
           set -euo pipefail
 
+          push_with_retry() {
+            local attempt=1
+            local max_attempts=5
+            local retry_delay=12
+            while true; do
+              if "$@"; then
+                return 0
+              fi
+              if (( attempt >= max_attempts )); then
+                echo "::error::Push failed after ${max_attempts} attempts: $*"
+                return 1
+              fi
+              echo "::warning::Push attempt ${attempt}/${max_attempts} failed for ${image_ref}; retrying in ${retry_delay}s..."
+              sleep "${retry_delay}"
+              attempt=$((attempt + 1))
+            done
+          }
+
           case "${RUNNER_ARCH}" in
             X64) arch="amd64" ;;
             ARM64) arch="arm64" ;;
@@ -436,11 +455,11 @@ jobs:
           if command -v podman >/dev/null 2>&1; then
             printf '%s' "${GHCR_PASSWORD}" | podman login ghcr.io -u "${GHCR_USERNAME}" --password-stdin
             podman build --pull -f Containerfile -t "${image_ref}" .
-            podman push "${image_ref}"
+            push_with_retry podman push "${image_ref}"
           elif command -v docker >/dev/null 2>&1; then
             printf '%s' "${GHCR_PASSWORD}" | docker login ghcr.io -u "${GHCR_USERNAME}" --password-stdin
             DOCKER_BUILDKIT=0 docker build --pull -f Containerfile -t "${image_ref}" .
-            docker push "${image_ref}"
+            push_with_retry docker push "${image_ref}"
           else
             echo "::error::Neither podman nor docker is available on this runner."
             exit 1
@@ -488,6 +507,24 @@ jobs:
         run: |
           set -euo pipefail
 
+          push_with_retry() {
+            local attempt=1
+            local max_attempts=5
+            local retry_delay=12
+            while true; do
+              if "$@"; then
+                return 0
+              fi
+              if (( attempt >= max_attempts )); then
+                echo "::error::Manifest publish failed after ${max_attempts} attempts: $*"
+                return 1
+              fi
+              echo "::warning::Manifest push attempt ${attempt}/${max_attempts} failed; retrying in ${retry_delay}s..."
+              sleep "${retry_delay}"
+              attempt=$((attempt + 1))
+            done
+          }
+
           image_ref="${IMAGE_REPO}:${RELEASE_TAG}"
           amd64_ref="${IMAGE_REPO}:${RELEASE_TAG}-amd64"
           arm64_ref="${IMAGE_REPO}:${RELEASE_TAG}-arm64"
@@ -498,14 +535,15 @@ jobs:
             podman manifest create "${image_ref}"
             podman manifest add "${image_ref}" "docker://${amd64_ref}"
             podman manifest add "${image_ref}" "docker://${arm64_ref}"
-            podman manifest push --all "${image_ref}" "docker://${image_ref}"
+            push_with_retry podman manifest push --all "${image_ref}" "docker://${image_ref}"
           elif command -v docker >/dev/null 2>&1; then
             printf '%s' "${GHCR_PASSWORD}" | docker login ghcr.io -u "${GHCR_USERNAME}" --password-stdin
             docker manifest rm "${image_ref}" >/dev/null 2>&1 || true
             docker manifest create "${image_ref}" "${amd64_ref}" "${arm64_ref}"
             docker manifest annotate "${image_ref}" "${amd64_ref}" --os linux --arch amd64
             docker manifest annotate "${image_ref}" "${arm64_ref}" --os linux --arch arm64
-            docker manifest push --purge "${image_ref}"
+            push_with_retry docker manifest push --purge "${image_ref}"
           else
             echo "::error::Neither podman nor docker is available on this runner."
             exit 1
+          fi
