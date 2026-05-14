@@ -418,8 +418,9 @@ jobs:
         env:
           IMAGE_REPO: ghcr.io/neuralmimicry/nmstt
           RELEASE_TAG: ${{ needs.package-release.outputs.release_tag }}
-          GHCR_USERNAME: ${{ github.actor }}
-          GHCR_PASSWORD: ${{ github.token }}
+          GHCR_USERNAME: ${{ secrets.GHCR_USERNAME != '' && secrets.GHCR_USERNAME || github.actor }}
+          GHCR_PASSWORD: ${{ secrets.GHCR_PASSWORD != '' && secrets.GHCR_PASSWORD || github.token }}
+          GHCR_AUTH_SOURCE: ${{ secrets.GHCR_PASSWORD != '' && 'secrets.GHCR_PASSWORD' || 'github.token' }}
           RUNNER_ARCH: ${{ matrix.runner_arch }}
         run: |
           set -euo pipefail
@@ -443,6 +444,39 @@ jobs:
             done
           }
 
+          DOCKER_CMD=()
+
+          resolve_docker_cmd() {
+            if [[ ${#DOCKER_CMD[@]} -gt 0 ]]; then
+              return 0
+            fi
+            if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+              DOCKER_CMD=(docker)
+              return 0
+            fi
+            if command -v sudo >/dev/null 2>&1 && command -v docker >/dev/null 2>&1 && sudo -n docker info >/dev/null 2>&1; then
+              DOCKER_CMD=(sudo docker)
+              return 0
+            fi
+            return 1
+          }
+
+          docker_login() {
+            printf '%s' "${GHCR_PASSWORD}" | "${DOCKER_CMD[@]}" login ghcr.io -u "${GHCR_USERNAME}" --password-stdin
+          }
+
+          docker_build() {
+            if [[ "${DOCKER_CMD[0]}" == "sudo" ]]; then
+              sudo DOCKER_BUILDKIT=0 docker build --pull -f Containerfile -t "${image_ref}" .
+            else
+              DOCKER_BUILDKIT=0 docker build --pull -f Containerfile -t "${image_ref}" .
+            fi
+          }
+
+          docker_push() {
+            "${DOCKER_CMD[@]}" push "${image_ref}"
+          }
+
           case "${RUNNER_ARCH}" in
             X64) arch="amd64" ;;
             ARM64) arch="arm64" ;;
@@ -453,26 +487,33 @@ jobs:
           esac
 
           image_ref="${IMAGE_REPO}:${RELEASE_TAG}-${arch}"
+          echo "Using GHCR credentials source: ${GHCR_AUTH_SOURCE}"
           if command -v podman >/dev/null 2>&1; then
             printf '%s' "${GHCR_PASSWORD}" | podman login ghcr.io -u "${GHCR_USERNAME}" --password-stdin
             podman build --pull -f Containerfile -t "${image_ref}" .
             if push_with_retry 2 podman push "${image_ref}"; then
               exit 0
             fi
-            if ! command -v docker >/dev/null 2>&1; then
-              echo "::error::Podman publish failed and docker is unavailable for fallback."
+            if ! resolve_docker_cmd; then
+              echo "::error::Podman publish failed and docker fallback is unavailable (docker missing or no daemon access, including sudo)."
               exit 1
             fi
             echo "::warning::Podman publish failed for ${image_ref}; falling back to docker publish."
-            printf '%s' "${GHCR_PASSWORD}" | docker login ghcr.io -u "${GHCR_USERNAME}" --password-stdin
-            DOCKER_BUILDKIT=0 docker build --pull -f Containerfile -t "${image_ref}" .
-            push_with_retry 5 docker push "${image_ref}"
-          elif command -v docker >/dev/null 2>&1; then
-            printf '%s' "${GHCR_PASSWORD}" | docker login ghcr.io -u "${GHCR_USERNAME}" --password-stdin
-            DOCKER_BUILDKIT=0 docker build --pull -f Containerfile -t "${image_ref}" .
-            push_with_retry 5 docker push "${image_ref}"
+            docker_login
+            docker_build
+            if ! push_with_retry 5 docker_push; then
+              echo "::error::GHCR denied write access for ${image_ref}. Grant package Actions access to neuralmimicry/nmstt or set GHCR_USERNAME/GHCR_PASSWORD repo secrets (PAT with write:packages)."
+              exit 1
+            fi
+          elif resolve_docker_cmd; then
+            docker_login
+            docker_build
+            if ! push_with_retry 5 docker_push; then
+              echo "::error::GHCR denied write access for ${image_ref}. Grant package Actions access to neuralmimicry/nmstt or set GHCR_USERNAME/GHCR_PASSWORD repo secrets (PAT with write:packages)."
+              exit 1
+            fi
           else
-            echo "::error::Neither podman nor docker is available on this runner."
+            echo "::error::Neither podman nor a usable docker daemon (direct or sudo) is available on this runner."
             exit 1
           fi
 
@@ -513,8 +554,9 @@ jobs:
         env:
           IMAGE_REPO: ghcr.io/neuralmimicry/nmstt
           RELEASE_TAG: ${{ needs.package-release.outputs.release_tag }}
-          GHCR_USERNAME: ${{ github.actor }}
-          GHCR_PASSWORD: ${{ github.token }}
+          GHCR_USERNAME: ${{ secrets.GHCR_USERNAME != '' && secrets.GHCR_USERNAME || github.actor }}
+          GHCR_PASSWORD: ${{ secrets.GHCR_PASSWORD != '' && secrets.GHCR_PASSWORD || github.token }}
+          GHCR_AUTH_SOURCE: ${{ secrets.GHCR_PASSWORD != '' && 'secrets.GHCR_PASSWORD' || 'github.token' }}
         run: |
           set -euo pipefail
 
@@ -540,6 +582,7 @@ jobs:
           image_ref="${IMAGE_REPO}:${RELEASE_TAG}"
           amd64_ref="${IMAGE_REPO}:${RELEASE_TAG}-amd64"
           arm64_ref="${IMAGE_REPO}:${RELEASE_TAG}-arm64"
+          echo "Using GHCR credentials source: ${GHCR_AUTH_SOURCE}"
 
           if command -v podman >/dev/null 2>&1; then
             printf '%s' "${GHCR_PASSWORD}" | podman login ghcr.io -u "${GHCR_USERNAME}" --password-stdin
@@ -560,14 +603,20 @@ jobs:
             docker manifest create "${image_ref}" "${amd64_ref}" "${arm64_ref}"
             docker manifest annotate "${image_ref}" "${amd64_ref}" --os linux --arch amd64
             docker manifest annotate "${image_ref}" "${arm64_ref}" --os linux --arch arm64
-            push_with_retry 5 docker manifest push --purge "${image_ref}"
+            if ! push_with_retry 5 docker manifest push --purge "${image_ref}"; then
+              echo "::error::GHCR denied manifest write for ${image_ref}. Grant package Actions access to neuralmimicry/nmstt or set GHCR_USERNAME/GHCR_PASSWORD repo secrets (PAT with write:packages)."
+              exit 1
+            fi
           elif command -v docker >/dev/null 2>&1; then
             printf '%s' "${GHCR_PASSWORD}" | docker login ghcr.io -u "${GHCR_USERNAME}" --password-stdin
             docker manifest rm "${image_ref}" >/dev/null 2>&1 || true
             docker manifest create "${image_ref}" "${amd64_ref}" "${arm64_ref}"
             docker manifest annotate "${image_ref}" "${amd64_ref}" --os linux --arch amd64
             docker manifest annotate "${image_ref}" "${arm64_ref}" --os linux --arch arm64
-            push_with_retry 5 docker manifest push --purge "${image_ref}"
+            if ! push_with_retry 5 docker manifest push --purge "${image_ref}"; then
+              echo "::error::GHCR denied manifest write for ${image_ref}. Grant package Actions access to neuralmimicry/nmstt or set GHCR_USERNAME/GHCR_PASSWORD repo secrets (PAT with write:packages)."
+              exit 1
+            fi
           else
             echo "::error::Neither podman nor docker is available on this runner."
             exit 1
