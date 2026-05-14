@@ -3,12 +3,30 @@ name: CI
 on:
   pull_request:
   push:
+  workflow_dispatch:
+    inputs:
+      publish_release:
+        description: "Publish a GitHub release for this run"
+        required: true
+        type: boolean
+        default: false
+      draft_release:
+        description: "Create/update release as draft during manual publish"
+        required: true
+        type: boolean
+        default: false
+      prerelease:
+        description: "Mark manually published release as prerelease"
+        required: true
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 env:
   CARGO_TERM_COLOR: always
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
   rust:
@@ -24,7 +42,7 @@ jobs:
         runner_arch: [X64, ARM64]
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Install native dependencies
         run: |
@@ -44,10 +62,31 @@ jobs:
               pkg-config
           fi
 
+      - name: Ensure rustup supports quiet toolchain listing
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -x "$HOME/.cargo/bin/rustup" ]] && "$HOME/.cargo/bin/rustup" toolchain list --quiet >/dev/null 2>&1; then
+            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+            exit 0
+          fi
+          if rustup toolchain list --quiet >/dev/null 2>&1; then
+            exit 0
+          fi
+
+          echo "Installing upstream rustup because system rustup lacks '--quiet' support."
+          curl --proto '=https' --tlsv1.2 --retry 10 --retry-connrefused --location --silent --show-error --fail https://sh.rustup.rs | sh -s -- --default-toolchain none -y
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
+
+      - name: Export Rust environment paths
+        run: |
+          echo "CARGO_HOME=${CARGO_HOME:-$HOME/.cargo}" >> "$GITHUB_ENV"
+          echo "RUSTUP_HOME=${RUSTUP_HOME:-$HOME/.rustup}" >> "$GITHUB_ENV"
 
       - name: Cache Rust artifacts
         uses: Swatinem/rust-cache@v2
@@ -60,6 +99,44 @@ jobs:
 
       - name: Run tests
         run: cargo test --locked --all-targets
+
+      - name: Validate release script
+        run: bash -n scripts/package-release.sh
+
+      - name: Prepare release binary artifact
+        if: github.event_name != 'pull_request'
+        id: release_binary
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          host="$(rustc -vV | sed -n 's/^host: //p')"
+          version="$(
+            sed -n '/^\[package\]/,/^\[/ s/^version = "\(.*\)"/\1/p' Cargo.toml |
+              head -n 1
+          )"
+          if [[ -z "$version" || -z "$host" ]]; then
+            echo "::error::Unable to derive nmstt package version or host target"
+            exit 1
+          fi
+
+          mkdir -p dist
+          artifact_base="nmstt-${version}-${host}"
+          cp target/release/nmstt "dist/${artifact_base}"
+          chmod +x "dist/${artifact_base}"
+
+          echo "host=${host}" >> "$GITHUB_OUTPUT"
+          echo "artifact_name=nmstt-raw-${host}" >> "$GITHUB_OUTPUT"
+          echo "artifact_path=dist/${artifact_base}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload raw release binary
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.release_binary.outputs.artifact_name }}
+          path: ${{ steps.release_binary.outputs.artifact_path }}
+          if-no-files-found: error
+          retention-days: 14
 
   container:
     name: Container (${{ matrix.runner_arch }})
@@ -75,7 +152,7 @@ jobs:
         runner_arch: [X64, ARM64]
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Build container image
         run: |
@@ -96,3 +173,339 @@ jobs:
           elif command -v docker >/dev/null 2>&1; then
             docker image rm nmstt-ci:${{ matrix.runner_arch }} || true
           fi
+
+  package-release:
+    name: Package Release
+    needs:
+      - rust
+      - container
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 20
+    if: >-
+      startsWith(github.ref, 'refs/tags/v') ||
+      (
+        github.event_name == 'push' &&
+        (
+          github.ref == 'refs/heads/main' ||
+          github.ref == 'refs/heads/master' ||
+          github.ref == 'refs/heads/develop'
+        )
+      ) ||
+      github.event_name == 'workflow_dispatch'
+    outputs:
+      artifact_name: ${{ steps.meta.outputs.artifact_name }}
+      artifact_version: ${{ steps.meta.outputs.artifact_version }}
+      package_version: ${{ steps.meta.outputs.package_version }}
+      release_tag: ${{ steps.meta.outputs.release_tag }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Download raw release binaries
+        uses: actions/download-artifact@v5
+        with:
+          pattern: nmstt-raw-*
+          path: ./raw-binaries
+          merge-multiple: true
+
+      - name: Package release artifacts
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          package_version="$(
+            sed -n '/^\[package\]/,/^\[/ s/^version = "\(.*\)"/\1/p' Cargo.toml |
+              head -n 1
+          )"
+          if [[ -z "$package_version" ]]; then
+            echo "::error::Unable to determine Cargo package.version"
+            exit 1
+          fi
+
+          short_sha="${GITHUB_SHA::0:7}"
+          release_tag=""
+
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            release_tag="${GITHUB_REF#refs/tags/}"
+            artifact_version="${release_tag#v}"
+          else
+            artifact_version="${package_version}-dev.${GITHUB_RUN_NUMBER}.${short_sha}"
+            if [[ "${GITHUB_REF}" == refs/heads/main || "${GITHUB_REF}" == refs/heads/master || "${GITHUB_REF}" == refs/heads/develop ]]; then
+              release_tag="latest-${GITHUB_REF#refs/heads/}"
+            fi
+          fi
+
+          if [[ "${GITHUB_REF}" == refs/tags/v* && "$artifact_version" != "$package_version" ]]; then
+            echo "::error::Tag ${release_tag} does not match Cargo.toml version ${package_version}"
+            exit 1
+          fi
+
+          alias_args=()
+          if [[ "${release_tag}" == latest-* ]]; then
+            alias_args=(--deb-channel-alias "${release_tag}")
+          fi
+
+          chmod +x scripts/package-release.sh
+          ./scripts/package-release.sh \
+            --version "${package_version}" \
+            --deb-version "${artifact_version}" \
+            "${alias_args[@]}" \
+            --input-dir ./raw-binaries \
+            --output-dir ./dist
+
+          artifact_name="nmstt-dist-${artifact_version}"
+          echo "artifact_name=${artifact_name}" >> "$GITHUB_OUTPUT"
+          echo "artifact_version=${artifact_version}" >> "$GITHUB_OUTPUT"
+          echo "package_version=${package_version}" >> "$GITHUB_OUTPUT"
+          echo "release_tag=${release_tag}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload packaged artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.meta.outputs.artifact_name }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 14
+
+  publish-release:
+    name: Publish Release
+    needs: package-release
+    runs-on: [self-hosted, Linux, X64]
+    if: >-
+      startsWith(github.ref, 'refs/tags/v') ||
+      (
+        github.event_name == 'push' &&
+        (
+          github.ref == 'refs/heads/main' ||
+          github.ref == 'refs/heads/master' ||
+          github.ref == 'refs/heads/develop'
+        )
+      ) ||
+      (github.event_name == 'workflow_dispatch' && inputs.publish_release)
+    permissions:
+      contents: write
+
+    steps:
+      - name: Validate publish target
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${{ needs.package-release.outputs.release_tag }}" ]]; then
+            echo "::error::Publishing requires a resolved release_tag from package metadata"
+            exit 1
+          fi
+
+      - name: Download packaged artifacts
+        uses: actions/download-artifact@v5
+        with:
+          name: ${{ needs.package-release.outputs.artifact_name }}
+          path: ./dist
+
+      - name: Create or update GitHub release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ needs.package-release.outputs.release_tag }}
+          DRAFT_RELEASE: >-
+            ${{ github.event_name == 'workflow_dispatch' && inputs.draft_release }}
+          MANUAL_PRERELEASE: >-
+            ${{ github.event_name == 'workflow_dispatch' && inputs.prerelease }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+
+          files=(dist/*)
+          if [[ ${#files[@]} -eq 0 ]]; then
+            echo "::error::No packaged artifacts were downloaded"
+            exit 1
+          fi
+
+          title="nmstt ${RELEASE_TAG}"
+          prerelease="${MANUAL_PRERELEASE}"
+          if [[ "${RELEASE_TAG}" == latest-* ]]; then
+            prerelease="true"
+          fi
+          if [[ "${GITHUB_EVENT_NAME}" != "workflow_dispatch" && "${RELEASE_TAG}" == *-* ]]; then
+            prerelease="true"
+          fi
+
+          if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
+            edit_args=(
+              "${RELEASE_TAG}"
+              --target "${GITHUB_SHA}"
+              --title "${title}"
+            )
+            if [[ "${DRAFT_RELEASE}" == "true" ]]; then
+              edit_args+=(--draft)
+            fi
+            if [[ "${prerelease}" == "true" ]]; then
+              edit_args+=(--prerelease)
+            fi
+            gh release edit "${edit_args[@]}"
+            if [[ "${RELEASE_TAG}" == latest-* ]]; then
+              mapfile -t existing_assets < <(gh release view "${RELEASE_TAG}" --json assets --jq '.assets[].name')
+              for asset_name in "${existing_assets[@]}"; do
+                gh release delete-asset "${RELEASE_TAG}" "${asset_name}" -y || true
+              done
+            fi
+            gh release upload "${RELEASE_TAG}" "${files[@]}" --clobber
+            exit 0
+          fi
+
+          args=(
+            "${RELEASE_TAG}"
+            "${files[@]}"
+            --target "${GITHUB_SHA}"
+            --title "${title}"
+            --generate-notes
+          )
+
+          if [[ "${DRAFT_RELEASE}" == "true" ]]; then
+            args+=(--draft)
+          fi
+          if [[ "${prerelease}" == "true" ]]; then
+            args+=(--prerelease)
+          fi
+
+          gh release create "${args[@]}"
+
+  publish-container-arch:
+    name: Publish Container (${{ matrix.runner_arch }})
+    needs: package-release
+    timeout-minutes: 45
+    runs-on:
+      - self-hosted
+      - Linux
+      - ${{ matrix.runner_arch }}
+    if: >-
+      startsWith(github.ref, 'refs/tags/v') ||
+      (
+        github.event_name == 'push' &&
+        (
+          github.ref == 'refs/heads/main' ||
+          github.ref == 'refs/heads/master' ||
+          github.ref == 'refs/heads/develop'
+        )
+      ) ||
+      (github.event_name == 'workflow_dispatch' && inputs.publish_release)
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        runner_arch: [X64, ARM64]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Validate publish target
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${{ needs.package-release.outputs.release_tag }}" ]]; then
+            echo "::error::Publishing container requires a resolved release tag"
+            exit 1
+          fi
+
+      - name: Build and push architecture image
+        shell: bash
+        env:
+          IMAGE_REPO: ghcr.io/neuralmimicry/nmstt
+          RELEASE_TAG: ${{ needs.package-release.outputs.release_tag }}
+          GHCR_USERNAME: ${{ github.actor }}
+          GHCR_PASSWORD: ${{ github.token }}
+          RUNNER_ARCH: ${{ matrix.runner_arch }}
+        run: |
+          set -euo pipefail
+
+          case "${RUNNER_ARCH}" in
+            X64) arch="amd64" ;;
+            ARM64) arch="arm64" ;;
+            *)
+              echo "::error::Unsupported runner architecture: ${RUNNER_ARCH}"
+              exit 1
+              ;;
+          esac
+
+          image_ref="${IMAGE_REPO}:${RELEASE_TAG}-${arch}"
+          if command -v podman >/dev/null 2>&1; then
+            printf '%s' "${GHCR_PASSWORD}" | podman login ghcr.io -u "${GHCR_USERNAME}" --password-stdin
+            podman build --pull -f Containerfile -t "${image_ref}" .
+            podman push "${image_ref}"
+          elif command -v docker >/dev/null 2>&1; then
+            printf '%s' "${GHCR_PASSWORD}" | docker login ghcr.io -u "${GHCR_USERNAME}" --password-stdin
+            DOCKER_BUILDKIT=0 docker build --pull -f Containerfile -t "${image_ref}" .
+            docker push "${image_ref}"
+          else
+            echo "::error::Neither podman nor docker is available on this runner."
+            exit 1
+          fi
+
+  publish-container-manifest:
+    name: Publish Container Manifest
+    needs:
+      - package-release
+      - publish-container-arch
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 20
+    if: >-
+      startsWith(github.ref, 'refs/tags/v') ||
+      (
+        github.event_name == 'push' &&
+        (
+          github.ref == 'refs/heads/main' ||
+          github.ref == 'refs/heads/master' ||
+          github.ref == 'refs/heads/develop'
+        )
+      ) ||
+      (github.event_name == 'workflow_dispatch' && inputs.publish_release)
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Validate publish target
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${{ needs.package-release.outputs.release_tag }}" ]]; then
+            echo "::error::Publishing container manifest requires a resolved release tag"
+            exit 1
+          fi
+
+      - name: Publish multi-architecture manifest
+        shell: bash
+        env:
+          IMAGE_REPO: ghcr.io/neuralmimicry/nmstt
+          RELEASE_TAG: ${{ needs.package-release.outputs.release_tag }}
+          GHCR_USERNAME: ${{ github.actor }}
+          GHCR_PASSWORD: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          image_ref="${IMAGE_REPO}:${RELEASE_TAG}"
+          amd64_ref="${IMAGE_REPO}:${RELEASE_TAG}-amd64"
+          arm64_ref="${IMAGE_REPO}:${RELEASE_TAG}-arm64"
+
+          if command -v podman >/dev/null 2>&1; then
+            printf '%s' "${GHCR_PASSWORD}" | podman login ghcr.io -u "${GHCR_USERNAME}" --password-stdin
+            podman manifest rm "${image_ref}" >/dev/null 2>&1 || true
+            podman manifest create "${image_ref}"
+            podman manifest add "${image_ref}" "docker://${amd64_ref}"
+            podman manifest add "${image_ref}" "docker://${arm64_ref}"
+            podman manifest push --all "${image_ref}" "docker://${image_ref}"
+          elif command -v docker >/dev/null 2>&1; then
+            printf '%s' "${GHCR_PASSWORD}" | docker login ghcr.io -u "${GHCR_USERNAME}" --password-stdin
+            docker manifest rm "${image_ref}" >/dev/null 2>&1 || true
+            docker manifest create "${image_ref}" "${amd64_ref}" "${arm64_ref}"
+            docker manifest annotate "${image_ref}" "${amd64_ref}" --os linux --arch amd64
+            docker manifest annotate "${image_ref}" "${arm64_ref}" --os linux --arch arm64
+            docker manifest push --purge "${image_ref}"
+          else
+            echo "::error::Neither podman nor docker is available on this runner."
+            exit 1
