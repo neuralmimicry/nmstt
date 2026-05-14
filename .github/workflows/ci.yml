@@ -425,8 +425,9 @@ jobs:
           set -euo pipefail
 
           push_with_retry() {
+            local max_attempts="$1"
+            shift
             local attempt=1
-            local max_attempts=5
             local retry_delay=12
             while true; do
               if "$@"; then
@@ -455,11 +456,21 @@ jobs:
           if command -v podman >/dev/null 2>&1; then
             printf '%s' "${GHCR_PASSWORD}" | podman login ghcr.io -u "${GHCR_USERNAME}" --password-stdin
             podman build --pull -f Containerfile -t "${image_ref}" .
-            push_with_retry podman push "${image_ref}"
+            if push_with_retry 2 podman push "${image_ref}"; then
+              exit 0
+            fi
+            if ! command -v docker >/dev/null 2>&1; then
+              echo "::error::Podman publish failed and docker is unavailable for fallback."
+              exit 1
+            fi
+            echo "::warning::Podman publish failed for ${image_ref}; falling back to docker publish."
+            printf '%s' "${GHCR_PASSWORD}" | docker login ghcr.io -u "${GHCR_USERNAME}" --password-stdin
+            DOCKER_BUILDKIT=0 docker build --pull -f Containerfile -t "${image_ref}" .
+            push_with_retry 5 docker push "${image_ref}"
           elif command -v docker >/dev/null 2>&1; then
             printf '%s' "${GHCR_PASSWORD}" | docker login ghcr.io -u "${GHCR_USERNAME}" --password-stdin
             DOCKER_BUILDKIT=0 docker build --pull -f Containerfile -t "${image_ref}" .
-            push_with_retry docker push "${image_ref}"
+            push_with_retry 5 docker push "${image_ref}"
           else
             echo "::error::Neither podman nor docker is available on this runner."
             exit 1
@@ -508,8 +519,9 @@ jobs:
           set -euo pipefail
 
           push_with_retry() {
+            local max_attempts="$1"
+            shift
             local attempt=1
-            local max_attempts=5
             local retry_delay=12
             while true; do
               if "$@"; then
@@ -535,14 +547,27 @@ jobs:
             podman manifest create "${image_ref}"
             podman manifest add "${image_ref}" "docker://${amd64_ref}"
             podman manifest add "${image_ref}" "docker://${arm64_ref}"
-            push_with_retry podman manifest push --all "${image_ref}" "docker://${image_ref}"
+            if push_with_retry 2 podman manifest push --all "${image_ref}" "docker://${image_ref}"; then
+              exit 0
+            fi
+            if ! command -v docker >/dev/null 2>&1; then
+              echo "::error::Podman manifest publish failed and docker is unavailable for fallback."
+              exit 1
+            fi
+            echo "::warning::Podman manifest publish failed for ${image_ref}; falling back to docker manifest publish."
+            printf '%s' "${GHCR_PASSWORD}" | docker login ghcr.io -u "${GHCR_USERNAME}" --password-stdin
+            docker manifest rm "${image_ref}" >/dev/null 2>&1 || true
+            docker manifest create "${image_ref}" "${amd64_ref}" "${arm64_ref}"
+            docker manifest annotate "${image_ref}" "${amd64_ref}" --os linux --arch amd64
+            docker manifest annotate "${image_ref}" "${arm64_ref}" --os linux --arch arm64
+            push_with_retry 5 docker manifest push --purge "${image_ref}"
           elif command -v docker >/dev/null 2>&1; then
             printf '%s' "${GHCR_PASSWORD}" | docker login ghcr.io -u "${GHCR_USERNAME}" --password-stdin
             docker manifest rm "${image_ref}" >/dev/null 2>&1 || true
             docker manifest create "${image_ref}" "${amd64_ref}" "${arm64_ref}"
             docker manifest annotate "${image_ref}" "${amd64_ref}" --os linux --arch amd64
             docker manifest annotate "${image_ref}" "${arm64_ref}" --os linux --arch arm64
-            push_with_retry docker manifest push --purge "${image_ref}"
+            push_with_retry 5 docker manifest push --purge "${image_ref}"
           else
             echo "::error::Neither podman nor docker is available on this runner."
             exit 1
