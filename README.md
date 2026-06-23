@@ -1,5 +1,13 @@
 # nmstt
 
+## Sponsor NeuralMimicry
+
+`nmstt` is an open-source, on-premises speech-to-text service built on Whisper-based inference — designed for privacy-first deployments, native ARM64 performance, and gesture and avatar-motion planning without relying on cloud STT vendors. NeuralMimicry is an independent open-source initiative and we rely on community support to sustain this work.
+
+**[☕ Support us on Crowdfunder](https://www.crowdfunder.co.uk/p/qr/aWggxwPW?utm_campaign=sharemodal&utm_medium=referral&utm_source=shortlink)**
+
+---
+
 `nmstt` is NeuralMimicry's standalone speech-to-text service.
 It was extracted from Refiner so speech recognition, motion planning, and audio decoding can be deployed, scaled, and maintained independently while keeping the existing Refiner `/api/voice/stt` contract stable.
 
