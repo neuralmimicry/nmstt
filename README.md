@@ -134,7 +134,7 @@ sudo systemctl status nmstt
 
 Tenant playbook:
 
-- `/home/pbisaacs/Developer/swarmhpc/swarmhpc/ansible/continuum_tenant_nmstt_site.yml`
+- `${SWARMHPC_ROOT}/swarmhpc/ansible/continuum_tenant_nmstt_site.yml`
 
 Role:
 
@@ -171,7 +171,7 @@ REFINER_STT_GESTURE_PREFER_SERVER=1
 
 This keeps Refiner's public API unchanged while the actual STT workload runs in the separate `nmstt` project.
 
-For the wider service-boundary design, see `/home/pbisaacs/Developer/neuralmimicry/rag_demo/SERVICE_SPLIT_ARCHITECTURE.md`.
+For the wider service-boundary design, see [`SERVICE_SPLIT_ARCHITECTURE.md`](https://github.com/neuralmimicry/rag_demo/blob/main/SERVICE_SPLIT_ARCHITECTURE.md).
 
 ## OpenAPI
 

@@ -9,3 +9,4 @@
 # Editor settings
 .idea/
 .vscode/
+/target
