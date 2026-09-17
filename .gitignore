@@ -10,3 +10,10 @@
 .idea/
 .vscode/
 /target
+
+# project_solver ignore additions
+.refiner/
+.research_cache/
+.venv/
+project_solver_output/
+delivery_pipeline_output/
