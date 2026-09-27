@@ -149,7 +149,16 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        runner_arch: [X64, ARM64]
+        include:
+          - runner_arch: X64
+            variant: amd64
+            page_size: 4k
+          - runner_arch: ARM64
+            variant: arm64-4k
+            page_size: 4k
+          - runner_arch: ARM64
+            variant: arm64-64k-hwe
+            page_size: 64k-hwe
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -157,9 +166,9 @@ jobs:
       - name: Build container image
         run: |
           if command -v podman >/dev/null 2>&1; then
-            podman build -f Containerfile -t nmstt-ci:${{ matrix.runner_arch }} .
+            podman build --build-arg TARGET_PAGE_SIZE=${{ matrix.page_size }} -f Containerfile -t nmstt-ci:${{ matrix.variant }} .
           elif command -v docker >/dev/null 2>&1; then
-            DOCKER_BUILDKIT=0 docker build --pull -f Containerfile -t nmstt-ci:${{ matrix.runner_arch }} .
+            DOCKER_BUILDKIT=0 docker build --pull --build-arg TARGET_PAGE_SIZE=${{ matrix.page_size }} -f Containerfile -t nmstt-ci:${{ matrix.variant }} .
           else
             echo "Neither podman nor docker is available on this runner." >&2
             exit 1
@@ -169,9 +178,9 @@ jobs:
         if: always()
         run: |
           if command -v podman >/dev/null 2>&1; then
-            podman image rm localhost/nmstt-ci:${{ matrix.runner_arch }} || podman image rm nmstt-ci:${{ matrix.runner_arch }} || true
+            podman image rm localhost/nmstt-ci:${{ matrix.variant }} || podman image rm nmstt-ci:${{ matrix.variant }} || true
           elif command -v docker >/dev/null 2>&1; then
-            docker image rm nmstt-ci:${{ matrix.runner_arch }} || true
+            docker image rm nmstt-ci:${{ matrix.variant }} || true
           fi
 
   package-release:
@@ -398,7 +407,16 @@ jobs:
       fail-fast: false
       max-parallel: 1
       matrix:
-        runner_arch: [X64, ARM64]
+        include:
+          - runner_arch: X64
+            variant: amd64
+            page_size: 4k
+          - runner_arch: ARM64
+            variant: arm64-4k
+            page_size: 4k
+          - runner_arch: ARM64
+            variant: arm64-64k-hwe
+            page_size: 64k-hwe
 
     steps:
       - name: Checkout
@@ -421,7 +439,6 @@ jobs:
           GHCR_USERNAME: ${{ secrets.GHCR_USERNAME != '' && secrets.GHCR_USERNAME || github.actor }}
           GHCR_PASSWORD: ${{ secrets.GHCR_PASSWORD != '' && secrets.GHCR_PASSWORD || github.token }}
           GHCR_AUTH_SOURCE: ${{ secrets.GHCR_PASSWORD != '' && 'secrets.GHCR_PASSWORD' || 'github.token' }}
-          RUNNER_ARCH: ${{ matrix.runner_arch }}
         run: |
           set -euo pipefail
 
@@ -467,9 +484,9 @@ jobs:
 
           docker_build() {
             if [[ "${DOCKER_CMD[0]}" == "sudo" ]]; then
-              sudo DOCKER_BUILDKIT=0 docker build --pull -f Containerfile -t "${image_ref}" .
+              sudo DOCKER_BUILDKIT=0 docker build --pull --build-arg TARGET_PAGE_SIZE="${{ matrix.page_size }}" -f Containerfile -t "${image_ref}" .
             else
-              DOCKER_BUILDKIT=0 docker build --pull -f Containerfile -t "${image_ref}" .
+              DOCKER_BUILDKIT=0 docker build --pull --build-arg TARGET_PAGE_SIZE="${{ matrix.page_size }}" -f Containerfile -t "${image_ref}" .
             fi
           }
 
@@ -477,20 +494,11 @@ jobs:
             "${DOCKER_CMD[@]}" push "${image_ref}"
           }
 
-          case "${RUNNER_ARCH}" in
-            X64) arch="amd64" ;;
-            ARM64) arch="arm64" ;;
-            *)
-              echo "::error::Unsupported runner architecture: ${RUNNER_ARCH}"
-              exit 1
-              ;;
-          esac
-
-          image_ref="${IMAGE_REPO}:${RELEASE_TAG}-${arch}"
+          image_ref="${IMAGE_REPO}:${RELEASE_TAG}-${{ matrix.variant }}"
           echo "Using GHCR credentials source: ${GHCR_AUTH_SOURCE}"
           if command -v podman >/dev/null 2>&1; then
             printf '%s' "${GHCR_PASSWORD}" | podman login ghcr.io -u "${GHCR_USERNAME}" --password-stdin
-            podman build --pull -f Containerfile -t "${image_ref}" .
+            podman build --pull --build-arg TARGET_PAGE_SIZE="${{ matrix.page_size }}" -f Containerfile -t "${image_ref}" .
             if push_with_retry 2 podman push "${image_ref}"; then
               exit 0
             fi
@@ -581,7 +589,7 @@ jobs:
 
           image_ref="${IMAGE_REPO}:${RELEASE_TAG}"
           amd64_ref="${IMAGE_REPO}:${RELEASE_TAG}-amd64"
-          arm64_ref="${IMAGE_REPO}:${RELEASE_TAG}-arm64"
+          arm64_ref="${IMAGE_REPO}:${RELEASE_TAG}-arm64-4k"
           echo "Using GHCR credentials source: ${GHCR_AUTH_SOURCE}"
 
           if command -v podman >/dev/null 2>&1; then

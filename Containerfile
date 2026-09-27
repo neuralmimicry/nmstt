@@ -1,3 +1,4 @@
+ARG TARGET_PAGE_SIZE=4k
 FROM docker.io/library/rust:1.88-bookworm AS builder
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
@@ -16,6 +17,8 @@ COPY src ./src
 RUN cargo build --release -j 1
 
 FROM docker.io/library/debian:bookworm-slim
+ARG TARGET_PAGE_SIZE
+LABEL org.opencontainers.image.page-size="${TARGET_PAGE_SIZE}"
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/*
