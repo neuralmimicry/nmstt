@@ -499,6 +499,44 @@ paths:
                 enum: [ok]
                 example: ok
 
+  /synthesize:
+    post:
+      summary: Text-to-speech (Piper)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [text]
+              properties:
+                text: {type: string, maxLength: 2000}
+                voice: {type: string, example: en_GB-alan-medium}
+                speed: {type: number, minimum: 0.5, maximum: 2.0, default: 1.0}
+      responses:
+        "200":
+          description: WAV audio (16-bit PCM mono)
+          content:
+            audio/wav:
+              schema: {type: string, format: binary}
+        "400": {description: Invalid text, voice name or speed}
+        "404": {description: Voice not installed}
+        "503": {description: TTS busy or disabled}
+        "504": {description: Synthesis timed out}
+  /voices:
+    get:
+      summary: Installed TTS voices
+      responses:
+        "200":
+          description: Voices
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  enabled: {type: boolean}
+                  default: {type: string}
+                  voices: {type: array, items: {type: string}}
   /transcribe:
     post:
       summary: Transcribe audio

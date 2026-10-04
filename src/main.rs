@@ -30,6 +30,10 @@ use tokio::sync::Semaphore;
 use tracing::{error, info};
 use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
 
+mod cochlea;
+mod gail;
+mod tts;
+
 #[derive(Parser, Debug)]
 #[command(name = "nmstt")]
 #[command(about = "NeuralMimicry speech-to-text service")]
@@ -67,6 +71,8 @@ struct AppState {
     allow_client_prompt: bool,
     canonicalize_entities: bool,
     default_collaboration_mode: bool,
+    tts: Option<Arc<tts::Tts>>,
+    gail: Option<gail::Gail>,
 }
 
 #[derive(Serialize)]
@@ -90,6 +96,9 @@ struct SttResponse {
     speaker_segments: Option<Vec<SpeakerSegment>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     collaboration_mode: Option<bool>,
+    /// Present when the client asked for Gail refinement: true if applied.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    refined: Option<bool>,
 }
 
 #[derive(Serialize)]
@@ -387,12 +396,35 @@ async fn main() {
             ],
             false,
         ),
+        tts: tts::TtsConfig::from_env().map(|cfg| Arc::new(tts::Tts::new(cfg))),
+        gail: gail::Gail::from_env(),
     };
+    info!(
+        "gail text assist {}",
+        if state.gail.is_some() {
+            "enabled (opt-in per request)"
+        } else {
+            "disabled (set NMSTT_GAIL_URL and token)"
+        }
+    );
+    match &state.tts {
+        Some(t) => info!(
+            "tts enabled | voices={:?} default={} workers={}",
+            t.voices(),
+            t.config().default_voice,
+            t.config().workers
+        ),
+        None => {
+            info!("tts disabled (no voice directory; set NMSTT_TTS_ENABLED/NMSTT_TTS_VOICE_DIR)")
+        }
+    }
 
     let app = Router::new()
         .route("/health", get(health))
         .route("/transcribe", post(transcribe))
         .route("/gesture-plan", post(gesture_plan))
+        .route("/synthesize", post(synthesize))
+        .route("/voices", get(voices))
         .with_state(Arc::new(state));
 
     let addr: SocketAddr = match args.bind.parse() {
@@ -429,10 +461,85 @@ async fn health() -> impl IntoResponse {
     (StatusCode::OK, "ok")
 }
 
+#[derive(Deserialize)]
+struct SynthesizeRequest {
+    text: String,
+    voice: Option<String>,
+    /// Speaking rate multiplier, 0.5-2.0 (default 1.0).
+    speed: Option<f32>,
+    /// Ask Gail to rewrite the text into speakable form first (falls back silently).
+    #[serde(default)]
+    normalize: bool,
+}
+
+/// `POST /synthesize` {"text", "voice"?, "speed"?} -> `audio/wav`.
+async fn synthesize(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<SynthesizeRequest>,
+) -> Response {
+    let Some(engine) = state.tts.clone() else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(ErrorResponse {
+                error: "tts_disabled",
+            }),
+        )
+            .into_response();
+    };
+    let mut text = req.text.clone();
+    if req.normalize {
+        if let Some(g) = &state.gail {
+            if let Some(spoken) = g.speakable(&text).await {
+                text = spoken;
+            }
+        }
+    }
+    match engine
+        .synthesize(&text, req.voice.as_deref(), req.speed)
+        .await
+    {
+        Ok(wav) => {
+            if let (Some(g), true) = (state.gail.clone(), gail::mirror_enabled()) {
+                let (wav_copy, spoken) = (wav.clone(), text.clone());
+                tokio::spawn(async move {
+                    let frames = tokio::task::spawn_blocking(move || {
+                        cochlea::wav_pcm16_mono(&wav_copy)
+                            .map(|(samples, rate)| cochlea::Cochlea::new(rate).spikes(&samples))
+                    })
+                    .await
+                    .ok()
+                    .flatten();
+                    if let Some(frames) = frames {
+                        g.mirror_speech("tts", spoken, frames, None);
+                    }
+                });
+            }
+            ([(axum::http::header::CONTENT_TYPE, "audio/wav")], wav).into_response()
+        }
+        Err(err) => {
+            let status =
+                StatusCode::from_u16(err.status()).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+            if status.is_server_error() {
+                error!("tts failed: {err}");
+            }
+            (status, Json(serde_json::json!({"error": err.to_string()}))).into_response()
+        }
+    }
+}
+
+/// `GET /voices` -> installed voices and the default.
+async fn voices(State(state): State<Arc<AppState>>) -> Response {
+    match &state.tts {
+        Some(t) => Json(serde_json::json!({"enabled": true, "default": t.config().default_voice, "voices": t.voices()})).into_response(),
+        None => Json(serde_json::json!({"enabled": false, "voices": []})).into_response(),
+    }
+}
+
 async fn transcribe(State(state): State<Arc<AppState>>, mut multipart: Multipart) -> Response {
     let mut audio: Option<Vec<u8>> = None;
     let mut lang: Option<String> = None;
     let mut prompt: Option<String> = None;
+    let mut refine = false;
     let mut gesture_mode: Option<String> = None;
     let mut avatar_mode: Option<String> = None;
     let mut office_mode: Option<bool> = None;
@@ -470,6 +577,10 @@ async fn transcribe(State(state): State<Arc<AppState>>, mut multipart: Multipart
                 if !text.trim().is_empty() {
                     lang = Some(text.trim().to_string());
                 }
+            }
+        } else if name_key == "refine" {
+            if let Ok(text) = field.text().await {
+                refine = parse_boolish(Some(text.as_str())).unwrap_or(false);
             }
         } else if name_key == "prompt" {
             if let Ok(text) = field.text().await {
@@ -565,6 +676,11 @@ async fn transcribe(State(state): State<Arc<AppState>>, mut multipart: Multipart
     let prompt_for_inference = prompt.clone();
     let collaboration_for_inference = selected_collaboration_mode;
 
+    let mirror_audio = if state.gail.is_some() && gail::mirror_enabled() {
+        Some(audio.clone())
+    } else {
+        None
+    };
     let result = tokio::task::spawn_blocking(move || {
         let _permit = permit;
         run_inference(
@@ -586,11 +702,45 @@ async fn transcribe(State(state): State<Arc<AppState>>, mut multipart: Multipart
             } else {
                 inference.text
             };
+            let mut refined = None;
+            let text = match (refine, &state.gail) {
+                (true, Some(g)) => match g.refine_transcript(&text).await {
+                    Some(better) => {
+                        refined = Some(true);
+                        better
+                    }
+                    None => {
+                        refined = Some(false);
+                        text
+                    }
+                },
+                (true, None) => {
+                    refined = Some(false);
+                    text
+                }
+                _ => text,
+            };
             let mut speaker_segments = inference.speaker_segments;
             if state.canonicalize_entities {
                 for segment in &mut speaker_segments {
                     segment.text = canonicalize_transcript_entities(&segment.text);
                 }
+            }
+            if let (Some(bytes), Some(g)) = (mirror_audio, state.gail.clone()) {
+                let (text_for_mirror, lang_for_mirror) = (text.clone(), lang.clone());
+                tokio::spawn(async move {
+                    let frames = tokio::task::spawn_blocking(move || {
+                        decode_audio(&bytes)
+                            .ok()
+                            .map(|(samples, rate)| cochlea::Cochlea::new(rate).spikes(&samples))
+                    })
+                    .await
+                    .ok()
+                    .flatten();
+                    if let Some(frames) = frames {
+                        g.mirror_speech("stt", text_for_mirror, frames, Some(lang_for_mirror));
+                    }
+                });
             }
             let plan = if state.gesture_enabled {
                 plan_gesture_motion(&text, &selected_gesture_mode, &selected_avatar_mode)
@@ -616,6 +766,7 @@ async fn transcribe(State(state): State<Arc<AppState>>, mut multipart: Multipart
                         Some(speaker_segments)
                     },
                     collaboration_mode: Some(selected_collaboration_mode),
+                    refined,
                 }),
             )
                 .into_response()
