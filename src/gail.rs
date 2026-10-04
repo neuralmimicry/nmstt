@@ -37,18 +37,45 @@ pub struct Gail {
 
 impl Gail {
     pub fn from_env() -> Option<Self> {
-        let get = |k: &str| std::env::var(k).ok().map(|v| v.trim().to_string()).filter(|v| !v.is_empty());
+        let get = |k: &str| {
+            std::env::var(k)
+                .ok()
+                .map(|v| v.trim().to_string())
+                .filter(|v| !v.is_empty())
+        };
         let url = get("NMSTT_GAIL_URL")?;
         let token = get("NMSTT_GAIL_TOKEN")
-            .or_else(|| get("NMSTT_GAIL_TOKEN_FILE").and_then(|p| std::fs::read_to_string(p).ok()).map(|t| t.trim().to_string()))
+            .or_else(|| {
+                get("NMSTT_GAIL_TOKEN_FILE")
+                    .and_then(|p| std::fs::read_to_string(p).ok())
+                    .map(|t| t.trim().to_string())
+            })
             .filter(|t| !t.is_empty())?;
-        let timeout = Duration::from_millis(get("NMSTT_GAIL_TIMEOUT_MS").and_then(|v| v.parse().ok()).unwrap_or(8000));
-        Some(Self::new(url, token, get("NMSTT_GAIL_MODEL").unwrap_or_else(|| "gail-auto".into()), timeout))
+        let timeout = Duration::from_millis(
+            get("NMSTT_GAIL_TIMEOUT_MS")
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(8000),
+        );
+        Some(Self::new(
+            url,
+            token,
+            get("NMSTT_GAIL_MODEL").unwrap_or_else(|| "gail-auto".into()),
+            timeout,
+        ))
     }
 
     pub fn new(url: String, token: String, model: String, timeout: Duration) -> Self {
-        let http = reqwest::Client::builder().timeout(timeout).build().expect("http client");
-        Self { url: url.trim_end_matches('/').to_string(), token, model, timeout, http }
+        let http = reqwest::Client::builder()
+            .timeout(timeout)
+            .build()
+            .expect("http client");
+        Self {
+            url: url.trim_end_matches('/').to_string(),
+            token,
+            model,
+            timeout,
+            http,
+        }
     }
 
     async fn chat(&self, system: &str, user: &str) -> Option<String> {
@@ -80,7 +107,9 @@ impl Gail {
             }
         };
         let v: Value = resp.json().await.ok()?;
-        v["choices"][0]["message"]["content"].as_str().map(|s| s.trim().to_string())
+        v["choices"][0]["message"]["content"]
+            .as_str()
+            .map(|s| s.trim().to_string())
     }
 
     pub async fn refine_transcript(&self, text: &str) -> Option<String> {
@@ -103,28 +132,44 @@ impl Gail {
     /// Fire-and-forget: send an utterance's auditory spike frames with the text
     /// that goes with it to Gail, which mirrors the pair into AARNN's sensory
     /// input. Bounded (drops when 4 are in flight); never blocks or fails the caller.
-    pub fn mirror_speech(&self, source: &'static str, text: String, frames: Vec<Vec<u16>>, lang: Option<String>) {
+    pub fn mirror_speech(
+        &self,
+        source: &'static str,
+        text: String,
+        frames: Vec<Vec<u16>>,
+        lang: Option<String>,
+    ) {
         use std::sync::atomic::{AtomicU64, Ordering};
         static SEQ: AtomicU64 = AtomicU64::new(0);
-        static SLOTS: std::sync::OnceLock<std::sync::Arc<tokio::sync::Semaphore>> = std::sync::OnceLock::new();
+        static SLOTS: std::sync::OnceLock<std::sync::Arc<tokio::sync::Semaphore>> =
+            std::sync::OnceLock::new();
         if text.trim().is_empty() || frames.iter().all(Vec::is_empty) {
             return;
         }
-        let slots = SLOTS.get_or_init(|| std::sync::Arc::new(tokio::sync::Semaphore::new(4))).clone();
+        let slots = SLOTS
+            .get_or_init(|| std::sync::Arc::new(tokio::sync::Semaphore::new(4)))
+            .clone();
         let Ok(permit) = slots.try_acquire_owned() else {
             warn!("speech mirror dropped: backlog full");
             return;
         };
         let pair_id = format!(
             "nmstt-{source}-{}-{}",
-            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis())
+                .unwrap_or(0),
             SEQ.fetch_add(1, Ordering::Relaxed)
         );
         let body = json!({
             "pair_id": pair_id, "source": source, "text": text, "lang": lang,
             "frame_ms": crate::cochlea::FRAME_MS, "bands": crate::cochlea::BANDS, "frames": frames,
         });
-        let req = self.http.post(format!("{}/v1/mirror/speech", self.url)).bearer_auth(&self.token).json(&body);
+        let req = self
+            .http
+            .post(format!("{}/v1/mirror/speech", self.url))
+            .bearer_auth(&self.token)
+            .json(&body);
         let timeout = self.timeout;
         tokio::spawn(async move {
             let _permit = permit;
@@ -139,17 +184,37 @@ impl Gail {
 }
 
 pub fn mirror_enabled() -> bool {
-    !matches!(std::env::var("NMSTT_AARNN_MIRROR").ok().as_deref().map(str::trim), Some("0" | "false" | "off" | "no"))
+    !matches!(
+        std::env::var("NMSTT_AARNN_MIRROR")
+            .ok()
+            .as_deref()
+            .map(str::trim),
+        Some("0" | "false" | "off" | "no")
+    )
 }
 
 /// Reject rewrites that are empty, chatty, or far from the original length.
-pub fn accept_rewrite(original: &str, rewrite: String, min_ratio: f32, max_ratio: f32) -> Option<String> {
+pub fn accept_rewrite(
+    original: &str,
+    rewrite: String,
+    min_ratio: f32,
+    max_ratio: f32,
+) -> Option<String> {
     let r = rewrite.trim().trim_matches('"').trim().to_string();
     if r.is_empty() {
         return None;
     }
     let lower = r.to_lowercase();
-    if ["here is", "here's", "sure", "corrected transcript:", "rewritten text:"].iter().any(|p| lower.starts_with(p)) {
+    if [
+        "here is",
+        "here's",
+        "sure",
+        "corrected transcript:",
+        "rewritten text:",
+    ]
+    .iter()
+    .any(|p| lower.starts_with(p))
+    {
         return None;
     }
     let ratio = r.chars().count() as f32 / original.trim().chars().count().max(1) as f32;
@@ -163,9 +228,23 @@ mod tests {
 
     #[test]
     fn rewrite_guards() {
-        assert_eq!(accept_rewrite("hello world", "Hello, world.".into(), 0.7, 1.4), Some("Hello, world.".into()));
-        assert_eq!(accept_rewrite("hello world", "Here is the corrected transcript: Hello".into(), 0.5, 5.0), None);
-        assert_eq!(accept_rewrite("a long original transcript", "short".into(), 0.7, 1.4), None);
+        assert_eq!(
+            accept_rewrite("hello world", "Hello, world.".into(), 0.7, 1.4),
+            Some("Hello, world.".into())
+        );
+        assert_eq!(
+            accept_rewrite(
+                "hello world",
+                "Here is the corrected transcript: Hello".into(),
+                0.5,
+                5.0
+            ),
+            None
+        );
+        assert_eq!(
+            accept_rewrite("a long original transcript", "short".into(), 0.7, 1.4),
+            None
+        );
         assert_eq!(accept_rewrite("x", "   ".into(), 0.0, 9.0), None);
     }
 
@@ -186,15 +265,38 @@ mod tests {
 
     #[tokio::test]
     async fn refines_and_falls_back_on_timeout_or_bad_output() {
-        let ok = Gail::new(serve("Hello, Gail.", 0).await, "t".into(), "gail-auto".into(), Duration::from_secs(2));
-        assert_eq!(ok.refine_transcript("hello gail").await, Some("Hello, Gail.".into()));
-        let slow = Gail::new(serve("Hello, Gail.", 3000).await, "t".into(), "gail-auto".into(), Duration::from_millis(200));
+        let ok = Gail::new(
+            serve("Hello, Gail.", 0).await,
+            "t".into(),
+            "gail-auto".into(),
+            Duration::from_secs(2),
+        );
+        assert_eq!(
+            ok.refine_transcript("hello gail").await,
+            Some("Hello, Gail.".into())
+        );
+        let slow = Gail::new(
+            serve("Hello, Gail.", 3000).await,
+            "t".into(),
+            "gail-auto".into(),
+            Duration::from_millis(200),
+        );
         let t = std::time::Instant::now();
         assert_eq!(slow.refine_transcript("hello gail").await, None);
         assert!(t.elapsed() < Duration::from_secs(2));
-        let chatty = Gail::new(serve("Sure! Hello, Gail.", 0).await, "t".into(), "gail-auto".into(), Duration::from_secs(2));
+        let chatty = Gail::new(
+            serve("Sure! Hello, Gail.", 0).await,
+            "t".into(),
+            "gail-auto".into(),
+            Duration::from_secs(2),
+        );
         assert_eq!(chatty.refine_transcript("hello gail").await, None);
-        let down = Gail::new("http://127.0.0.1:9".into(), "t".into(), "gail-auto".into(), Duration::from_secs(1));
+        let down = Gail::new(
+            "http://127.0.0.1:9".into(),
+            "t".into(),
+            "gail-auto".into(),
+            Duration::from_secs(1),
+        );
         assert_eq!(down.speakable("It costs £5").await, None);
     }
 }

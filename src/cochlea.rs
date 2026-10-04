@@ -70,7 +70,16 @@ impl Cochlea {
                     .collect()
             })
             .collect();
-        Self { rate, win, hop, fft, hann, filters, threshold: 0.35, floor: -9.0 }
+        Self {
+            rate,
+            win,
+            hop,
+            fft,
+            hann,
+            filters,
+            threshold: 0.35,
+            floor: -9.0,
+        }
     }
 
     pub fn rate(&self) -> u32 {
@@ -88,7 +97,11 @@ impl Cochlea {
         let mut start = 0;
         while start + self.win <= samples.len() {
             input.iter_mut().for_each(|x| *x = 0.0);
-            for (i, (s, w)) in samples[start..start + self.win].iter().zip(&self.hann).enumerate() {
+            for (i, (s, w)) in samples[start..start + self.win]
+                .iter()
+                .zip(&self.hann)
+                .enumerate()
+            {
                 input[i] = s * w;
             }
             if self.fft.process(&mut input, &mut spectrum).is_ok() {
@@ -183,12 +196,24 @@ mod tests {
         let mut audio = vec![0.0; 3200]; // 200 ms silence
         audio.extend(tone(16_000, 1000.0, 0.5, 0.5));
         let frames = c.spikes(&audio);
-        assert!((68..=72).contains(&frames.len()), "~70 frames of 10 ms, got {}", frames.len());
-        let first = frames.iter().position(|f| !f.is_empty()).expect("onset spike");
-        assert!((17..=21).contains(&first), "onset near 200 ms, frame {first}");
+        assert!(
+            (68..=72).contains(&frames.len()),
+            "~70 frames of 10 ms, got {}",
+            frames.len()
+        );
+        let first = frames
+            .iter()
+            .position(|f| !f.is_empty())
+            .expect("onset spike");
+        assert!(
+            (17..=21).contains(&first),
+            "onset near 200 ms, frame {first}"
+        );
         // The band containing 1 kHz must be among the first spikes.
         let e = c.energies(&tone(16_000, 1000.0, 0.1, 0.5));
-        let peak = (0..BANDS).max_by(|a, b| e[3][*a].total_cmp(&e[3][*b])).unwrap() as u16;
+        let peak = (0..BANDS)
+            .max_by(|a, b| e[3][*a].total_cmp(&e[3][*b]))
+            .unwrap() as u16;
         assert!(frames[first].contains(&peak));
         // Sparse: far fewer events than frames x bands.
         let events: usize = frames.iter().map(Vec::len).sum();
@@ -198,14 +223,28 @@ mod tests {
     #[test]
     fn different_tones_use_different_bands() {
         let c = Cochlea::new(22_050);
-        let lo: std::collections::BTreeSet<u16> = c.spikes(&tone(22_050, 300.0, 0.3, 0.5)).concat().into_iter().collect();
-        let hi: std::collections::BTreeSet<u16> = c.spikes(&tone(22_050, 4000.0, 0.3, 0.5)).concat().into_iter().collect();
-        assert!(lo.iter().max() < hi.iter().min(), "low {lo:?} vs high {hi:?}");
+        let lo: std::collections::BTreeSet<u16> = c
+            .spikes(&tone(22_050, 300.0, 0.3, 0.5))
+            .concat()
+            .into_iter()
+            .collect();
+        let hi: std::collections::BTreeSet<u16> = c
+            .spikes(&tone(22_050, 4000.0, 0.3, 0.5))
+            .concat()
+            .into_iter()
+            .collect();
+        assert!(
+            lo.iter().max() < hi.iter().min(),
+            "low {lo:?} vs high {hi:?}"
+        );
     }
 
     #[test]
     fn parses_piper_style_wav() {
-        let pcm: Vec<u8> = [0i16, 16384, -16384].iter().flat_map(|s| s.to_le_bytes()).collect();
+        let pcm: Vec<u8> = [0i16, 16384, -16384]
+            .iter()
+            .flat_map(|s| s.to_le_bytes())
+            .collect();
         let mut wav = b"RIFF\0\0\0\0WAVEfmt ".to_vec();
         wav.extend(16u32.to_le_bytes());
         wav.extend(1u16.to_le_bytes()); // PCM

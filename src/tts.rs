@@ -37,7 +37,8 @@ pub struct TtsConfig {
 impl TtsConfig {
     pub fn from_env() -> Option<Self> {
         let get = |k: &str| std::env::var(k).ok().filter(|v| !v.trim().is_empty());
-        let voice_dir = PathBuf::from(get("NMSTT_TTS_VOICE_DIR").unwrap_or_else(|| "/app/voices".into()));
+        let voice_dir =
+            PathBuf::from(get("NMSTT_TTS_VOICE_DIR").unwrap_or_else(|| "/app/voices".into()));
         let enabled = match get("NMSTT_TTS_ENABLED").map(|v| v.to_lowercase()) {
             Some(v) => matches!(v.as_str(), "1" | "true" | "yes" | "on"),
             None => voice_dir.is_dir(),
@@ -47,9 +48,12 @@ impl TtsConfig {
         }
         let num = |k: &str, d: u64| get(k).and_then(|v| v.parse().ok()).unwrap_or(d);
         Some(Self {
-            piper_bin: PathBuf::from(get("NMSTT_TTS_PIPER_BIN").unwrap_or_else(|| "/opt/piper/piper".into())),
+            piper_bin: PathBuf::from(
+                get("NMSTT_TTS_PIPER_BIN").unwrap_or_else(|| "/opt/piper/piper".into()),
+            ),
             voice_dir,
-            default_voice: get("NMSTT_TTS_DEFAULT_VOICE").unwrap_or_else(|| "en_GB-alan-medium".into()),
+            default_voice: get("NMSTT_TTS_DEFAULT_VOICE")
+                .unwrap_or_else(|| "en_GB-alan-medium".into()),
             workers: num("NMSTT_TTS_WORKERS", 2).max(1) as usize,
             timeout: Duration::from_millis(num("NMSTT_TTS_TIMEOUT_MS", 30_000)),
             queue_timeout: Duration::from_millis(num("NMSTT_TTS_QUEUE_TIMEOUT_MS", 10_000)),
@@ -98,7 +102,13 @@ pub struct Tts {
 /// Remove control characters (keeping newlines as sentence breaks) and trim.
 pub fn sanitize_text(text: &str) -> String {
     text.chars()
-        .map(|c| if c == '\n' || c == '\r' || c == '\t' { ' ' } else { c })
+        .map(|c| {
+            if c == '\n' || c == '\r' || c == '\t' {
+                ' '
+            } else {
+                c
+            }
+        })
         .filter(|c| !c.is_control())
         .collect::<String>()
         .split_whitespace()
@@ -110,7 +120,9 @@ pub fn sanitize_text(text: &str) -> String {
 pub fn valid_voice_name(name: &str) -> bool {
     !name.is_empty()
         && name.len() <= 128
-        && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '.')
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '.')
         && !name.contains("..")
 }
 
@@ -133,7 +145,11 @@ impl Tts {
             .filter_map(|e| {
                 let name = e.file_name().to_string_lossy().to_string();
                 let stem = name.strip_suffix(".onnx")?.to_string();
-                self.cfg.voice_dir.join(format!("{name}.json")).is_file().then_some(stem)
+                self.cfg
+                    .voice_dir
+                    .join(format!("{name}.json"))
+                    .is_file()
+                    .then_some(stem)
             })
             .collect();
         out.sort();
@@ -141,7 +157,10 @@ impl Tts {
     }
 
     fn voice_path(&self, voice: Option<&str>) -> Result<PathBuf, TtsError> {
-        let name = voice.map(str::trim).filter(|v| !v.is_empty()).unwrap_or(&self.cfg.default_voice);
+        let name = voice
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+            .unwrap_or(&self.cfg.default_voice);
         if !valid_voice_name(name) {
             return Err(TtsError::InvalidVoice);
         }
@@ -154,7 +173,12 @@ impl Tts {
     }
 
     /// Synthesize `text` to a WAV byte vector.
-    pub async fn synthesize(&self, text: &str, voice: Option<&str>, speed: Option<f32>) -> Result<Vec<u8>, TtsError> {
+    pub async fn synthesize(
+        &self,
+        text: &str,
+        voice: Option<&str>,
+        speed: Option<f32>,
+    ) -> Result<Vec<u8>, TtsError> {
         let text = sanitize_text(text);
         if text.is_empty() {
             return Err(TtsError::EmptyText);
@@ -202,9 +226,18 @@ impl Tts {
             }
         };
 
-        let mut stdin = child.stdin.take().ok_or_else(|| TtsError::Failed("no stdin".into()))?;
-        let mut stdout = child.stdout.take().ok_or_else(|| TtsError::Failed("no stdout".into()))?;
-        let mut stderr = child.stderr.take().ok_or_else(|| TtsError::Failed("no stderr".into()))?;
+        let mut stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| TtsError::Failed("no stdin".into()))?;
+        let mut stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| TtsError::Failed("no stdout".into()))?;
+        let mut stderr = child
+            .stderr
+            .take()
+            .ok_or_else(|| TtsError::Failed("no stderr".into()))?;
 
         let work = async move {
             // Write and read concurrently so a large output can never deadlock the pipe.
@@ -219,18 +252,35 @@ impl Tts {
             };
             let mut audio = Vec::new();
             let mut err = Vec::new();
-            let (w, r, e) = tokio::join!(writer, stdout.read_to_end(&mut audio), stderr.read_to_end(&mut err));
+            let (w, r, e) = tokio::join!(
+                writer,
+                stdout.read_to_end(&mut audio),
+                stderr.read_to_end(&mut err)
+            );
             w.map_err(|e| TtsError::Failed(format!("write: {e}")))?;
             r.map_err(|e| TtsError::Failed(format!("read: {e}")))?;
             let _ = e;
-            let status = child.wait().await.map_err(|e| TtsError::Failed(format!("wait: {e}")))?;
+            let status = child
+                .wait()
+                .await
+                .map_err(|e| TtsError::Failed(format!("wait: {e}")))?;
             if !status.success() {
-                let tail: String = String::from_utf8_lossy(&err).lines().last().unwrap_or("").chars().take(200).collect();
-                return Err(TtsError::Failed(format!("piper exited with {status}: {tail}")));
+                let tail: String = String::from_utf8_lossy(&err)
+                    .lines()
+                    .last()
+                    .unwrap_or("")
+                    .chars()
+                    .take(200)
+                    .collect();
+                return Err(TtsError::Failed(format!(
+                    "piper exited with {status}: {tail}"
+                )));
             }
             Ok(audio)
         };
-        let audio = tokio::time::timeout(self.cfg.timeout, work).await.map_err(|_| TtsError::Timeout)??;
+        let audio = tokio::time::timeout(self.cfg.timeout, work)
+            .await
+            .map_err(|_| TtsError::Timeout)??;
         if audio.len() < 44 || &audio[0..4] != b"RIFF" || &audio[8..12] != b"WAVE" {
             return Err(TtsError::Failed("piper did not produce WAV audio".into()));
         }
@@ -321,19 +371,39 @@ mod tests {
     #[tokio::test]
     async fn rejects_bad_requests_before_spawning() {
         let (_d, tts) = fixture("#!/bin/sh\nexit 99\n");
-        assert_eq!(tts.synthesize("   ", None, None).await, Err(TtsError::EmptyText));
-        assert_eq!(tts.synthesize(&"x".repeat(51), None, None).await, Err(TtsError::TooLong(50)));
-        assert_eq!(tts.synthesize("hi", Some("../x"), None).await, Err(TtsError::InvalidVoice));
-        assert_eq!(tts.synthesize("hi", Some("orphan"), None).await, Err(TtsError::UnknownVoice("orphan".into())));
-        assert_eq!(tts.synthesize("hi", None, Some(5.0)).await, Err(TtsError::InvalidSpeed));
+        assert_eq!(
+            tts.synthesize("   ", None, None).await,
+            Err(TtsError::EmptyText)
+        );
+        assert_eq!(
+            tts.synthesize(&"x".repeat(51), None, None).await,
+            Err(TtsError::TooLong(50))
+        );
+        assert_eq!(
+            tts.synthesize("hi", Some("../x"), None).await,
+            Err(TtsError::InvalidVoice)
+        );
+        assert_eq!(
+            tts.synthesize("hi", Some("orphan"), None).await,
+            Err(TtsError::UnknownVoice("orphan".into()))
+        );
+        assert_eq!(
+            tts.synthesize("hi", None, Some(5.0)).await,
+            Err(TtsError::InvalidSpeed)
+        );
     }
 
     #[tokio::test]
     async fn reports_piper_failure_and_non_wav_output() {
         let (_d, tts) = fixture("#!/bin/sh\necho 'model load failed' >&2\nexit 3\n");
-        assert!(matches!(tts.synthesize("hi", None, None).await, Err(TtsError::Failed(m)) if m.contains("model load failed")));
+        assert!(
+            matches!(tts.synthesize("hi", None, None).await, Err(TtsError::Failed(m)) if m.contains("model load failed"))
+        );
         let (_d2, tts2) = fixture("#!/bin/sh\ncat >/dev/null\necho notwav\n");
-        assert!(matches!(tts2.synthesize("hi", None, None).await, Err(TtsError::Failed(_))));
+        assert!(matches!(
+            tts2.synthesize("hi", None, None).await,
+            Err(TtsError::Failed(_))
+        ));
     }
 
     #[tokio::test]
@@ -341,12 +411,18 @@ mod tests {
         let (_d, tts) = fixture("#!/bin/sh\nsleep 5\n");
         let tts = Arc::new(tts);
         let start = std::time::Instant::now();
-        let (a, b) = tokio::join!(tts.synthesize("one", None, None), tts.synthesize("two", None, None));
+        let (a, b) = tokio::join!(
+            tts.synthesize("one", None, None),
+            tts.synthesize("two", None, None)
+        );
         // workers=1: the first times out (1.5 s), the second cannot get a slot within 0.3 s.
         let mut results = vec![a, b];
         results.sort_by_key(|r| format!("{r:?}"));
         assert!(results.contains(&Err(TtsError::Timeout)));
         assert!(results.contains(&Err(TtsError::Busy)));
-        assert!(start.elapsed() < Duration::from_secs(4), "kill_on_drop must stop the stuck child");
+        assert!(
+            start.elapsed() < Duration::from_secs(4),
+            "kill_on_drop must stop the stuck child"
+        );
     }
 }

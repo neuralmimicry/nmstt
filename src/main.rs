@@ -399,10 +399,24 @@ async fn main() {
         tts: tts::TtsConfig::from_env().map(|cfg| Arc::new(tts::Tts::new(cfg))),
         gail: gail::Gail::from_env(),
     };
-    info!("gail text assist {}", if state.gail.is_some() { "enabled (opt-in per request)" } else { "disabled (set NMSTT_GAIL_URL and token)" });
+    info!(
+        "gail text assist {}",
+        if state.gail.is_some() {
+            "enabled (opt-in per request)"
+        } else {
+            "disabled (set NMSTT_GAIL_URL and token)"
+        }
+    );
     match &state.tts {
-        Some(t) => info!("tts enabled | voices={:?} default={} workers={}", t.voices(), t.config().default_voice, t.config().workers),
-        None => info!("tts disabled (no voice directory; set NMSTT_TTS_ENABLED/NMSTT_TTS_VOICE_DIR)"),
+        Some(t) => info!(
+            "tts enabled | voices={:?} default={} workers={}",
+            t.voices(),
+            t.config().default_voice,
+            t.config().workers
+        ),
+        None => {
+            info!("tts disabled (no voice directory; set NMSTT_TTS_ENABLED/NMSTT_TTS_VOICE_DIR)")
+        }
     }
 
     let app = Router::new()
@@ -459,9 +473,18 @@ struct SynthesizeRequest {
 }
 
 /// `POST /synthesize` {"text", "voice"?, "speed"?} -> `audio/wav`.
-async fn synthesize(State(state): State<Arc<AppState>>, Json(req): Json<SynthesizeRequest>) -> Response {
+async fn synthesize(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<SynthesizeRequest>,
+) -> Response {
     let Some(engine) = state.tts.clone() else {
-        return (StatusCode::SERVICE_UNAVAILABLE, Json(ErrorResponse { error: "tts_disabled" })).into_response();
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(ErrorResponse {
+                error: "tts_disabled",
+            }),
+        )
+            .into_response();
     };
     let mut text = req.text.clone();
     if req.normalize {
@@ -471,13 +494,17 @@ async fn synthesize(State(state): State<Arc<AppState>>, Json(req): Json<Synthesi
             }
         }
     }
-    match engine.synthesize(&text, req.voice.as_deref(), req.speed).await {
+    match engine
+        .synthesize(&text, req.voice.as_deref(), req.speed)
+        .await
+    {
         Ok(wav) => {
             if let (Some(g), true) = (state.gail.clone(), gail::mirror_enabled()) {
                 let (wav_copy, spoken) = (wav.clone(), text.clone());
                 tokio::spawn(async move {
                     let frames = tokio::task::spawn_blocking(move || {
-                        cochlea::wav_pcm16_mono(&wav_copy).map(|(samples, rate)| cochlea::Cochlea::new(rate).spikes(&samples))
+                        cochlea::wav_pcm16_mono(&wav_copy)
+                            .map(|(samples, rate)| cochlea::Cochlea::new(rate).spikes(&samples))
                     })
                     .await
                     .ok()
@@ -490,7 +517,8 @@ async fn synthesize(State(state): State<Arc<AppState>>, Json(req): Json<Synthesi
             ([(axum::http::header::CONTENT_TYPE, "audio/wav")], wav).into_response()
         }
         Err(err) => {
-            let status = StatusCode::from_u16(err.status()).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+            let status =
+                StatusCode::from_u16(err.status()).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
             if status.is_server_error() {
                 error!("tts failed: {err}");
             }
@@ -648,7 +676,11 @@ async fn transcribe(State(state): State<Arc<AppState>>, mut multipart: Multipart
     let prompt_for_inference = prompt.clone();
     let collaboration_for_inference = selected_collaboration_mode;
 
-    let mirror_audio = if state.gail.is_some() && gail::mirror_enabled() { Some(audio.clone()) } else { None };
+    let mirror_audio = if state.gail.is_some() && gail::mirror_enabled() {
+        Some(audio.clone())
+    } else {
+        None
+    };
     let result = tokio::task::spawn_blocking(move || {
         let _permit = permit;
         run_inference(
@@ -698,7 +730,9 @@ async fn transcribe(State(state): State<Arc<AppState>>, mut multipart: Multipart
                 let (text_for_mirror, lang_for_mirror) = (text.clone(), lang.clone());
                 tokio::spawn(async move {
                     let frames = tokio::task::spawn_blocking(move || {
-                        decode_audio(&bytes).ok().map(|(samples, rate)| cochlea::Cochlea::new(rate).spikes(&samples))
+                        decode_audio(&bytes)
+                            .ok()
+                            .map(|(samples, rate)| cochlea::Cochlea::new(rate).spikes(&samples))
                     })
                     .await
                     .ok()
