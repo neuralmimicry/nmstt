@@ -57,3 +57,13 @@ ENV NMSTT_TTS_PIPER_BIN=/opt/piper/piper NMSTT_TTS_VOICE_DIR=/app/voices NMSTT_T
 EXPOSE 7079
 ENTRYPOINT ["/usr/local/bin/nmstt"]
 CMD ["--model", "/app/models/ggml-tiny.en.bin", "--bind", "0.0.0.0:7079", "--lang", "en-GB", "--threads", "2", "--workers", "4", "--max-audio-bytes", "8000000"]
+
+# OCI metadata (final stage) so GHCR links the package to its source repository.
+ARG VCS_REF=unknown
+ARG BUILD_VERSION=dev
+LABEL org.opencontainers.image.source="https://github.com/neuralmimicry/nmstt" \
+      org.opencontainers.image.url="https://github.com/neuralmimicry/nmstt" \
+      org.opencontainers.image.description="On-premises speech-to-text service (Whisper-based), privacy-first and ARM64-native, with gesture and avatar-motion planning" \
+      org.opencontainers.image.vendor="NeuralMimicry" \
+      org.opencontainers.image.revision="${VCS_REF}" \
+      org.opencontainers.image.version="${BUILD_VERSION}"
