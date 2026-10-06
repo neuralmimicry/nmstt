@@ -43,6 +43,17 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v5
+      - name: Check OCI source labels
+        shell: bash
+        run: |
+          # GHCR links a package to its repo via org.opencontainers.image.source;
+          # every Containerfile/Dockerfile (incl. templates) must carry it.
+          want="org.opencontainers.image.source=\"https://github.com/${GITHUB_REPOSITORY}\""
+          status=0
+          while IFS= read -r f; do
+            grep -qF "$want" "$f" || { echo "::error file=$f::missing $want"; status=1; }
+          done < <(git ls-files | grep -iE '(^|/)(containerfile|dockerfile)[^/]*$|\.(containerfile|dockerfile)(\.j2)?$' | grep -viE '\.(md|py|sh|txt|ya?ml|json)$')
+          exit "$status"
 
       - name: Install native dependencies
         run: |
@@ -484,9 +495,9 @@ jobs:
 
           docker_build() {
             if [[ "${DOCKER_CMD[0]}" == "sudo" ]]; then
-              sudo DOCKER_BUILDKIT=0 docker build --pull --build-arg TARGET_PAGE_SIZE="${{ matrix.page_size }}" -f Containerfile -t "${image_ref}" .
+              sudo DOCKER_BUILDKIT=0 docker build --pull --build-arg TARGET_PAGE_SIZE="${{ matrix.page_size }}" --build-arg VCS_REF="${GITHUB_SHA}" --build-arg BUILD_VERSION="${RELEASE_TAG#v}" -f Containerfile -t "${image_ref}" .
             else
-              DOCKER_BUILDKIT=0 docker build --pull --build-arg TARGET_PAGE_SIZE="${{ matrix.page_size }}" -f Containerfile -t "${image_ref}" .
+              DOCKER_BUILDKIT=0 docker build --pull --build-arg TARGET_PAGE_SIZE="${{ matrix.page_size }}" --build-arg VCS_REF="${GITHUB_SHA}" --build-arg BUILD_VERSION="${RELEASE_TAG#v}" -f Containerfile -t "${image_ref}" .
             fi
           }
 
@@ -498,7 +509,7 @@ jobs:
           echo "Using GHCR credentials source: ${GHCR_AUTH_SOURCE}"
           if command -v podman >/dev/null 2>&1; then
             printf '%s' "${GHCR_PASSWORD}" | podman login ghcr.io -u "${GHCR_USERNAME}" --password-stdin
-            podman build --pull --build-arg TARGET_PAGE_SIZE="${{ matrix.page_size }}" -f Containerfile -t "${image_ref}" .
+            podman build --pull --build-arg TARGET_PAGE_SIZE="${{ matrix.page_size }}" --build-arg VCS_REF="${GITHUB_SHA}" --build-arg BUILD_VERSION="${RELEASE_TAG#v}" -f Containerfile -t "${image_ref}" .
             if push_with_retry 2 podman push "${image_ref}"; then
               exit 0
             fi
@@ -595,7 +606,15 @@ jobs:
           if command -v podman >/dev/null 2>&1; then
             printf '%s' "${GHCR_PASSWORD}" | podman login ghcr.io -u "${GHCR_USERNAME}" --password-stdin
             podman manifest rm "${image_ref}" >/dev/null 2>&1 || true
-            podman manifest create "${image_ref}"
+            # Index annotations let GHCR link the multi-arch package to this repo.
+            index_annotations=()
+            if podman manifest create --help 2>/dev/null | grep -q -- '--annotation'; then
+              index_annotations=(
+                --annotation "org.opencontainers.image.source=https://github.com/neuralmimicry/nmstt"
+                --annotation "org.opencontainers.image.description=On-premises speech-to-text service (Whisper-based), privacy-first and ARM64-native"
+              )
+            fi
+            podman manifest create "${index_annotations[@]}" "${image_ref}"
             podman manifest add "${image_ref}" "docker://${amd64_ref}"
             podman manifest add "${image_ref}" "docker://${arm64_ref}"
             if push_with_retry 2 podman manifest push --all "${image_ref}" "docker://${image_ref}"; then
