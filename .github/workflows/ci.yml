@@ -447,9 +447,11 @@ jobs:
         env:
           IMAGE_REPO: ghcr.io/neuralmimicry/nmstt
           RELEASE_TAG: ${{ needs.package-release.outputs.release_tag }}
-          GHCR_USERNAME: ${{ secrets.GHCR_USERNAME != '' && secrets.GHCR_USERNAME || github.actor }}
-          GHCR_PASSWORD: ${{ secrets.GHCR_PASSWORD != '' && secrets.GHCR_PASSWORD || github.token }}
-          GHCR_AUTH_SOURCE: ${{ secrets.GHCR_PASSWORD != '' && 'secrets.GHCR_PASSWORD' || 'github.token' }}
+          # Use the short-lived workflow token; repo-scoped package access is
+          # safer and more reliable than a long-lived GHCR PAT secret.
+          GHCR_USERNAME: ${{ github.actor }}
+          GHCR_PASSWORD: ${{ github.token }}
+          GHCR_AUTH_SOURCE: github.token
         run: |
           set -euo pipefail
 
@@ -573,9 +575,9 @@ jobs:
         env:
           IMAGE_REPO: ghcr.io/neuralmimicry/nmstt
           RELEASE_TAG: ${{ needs.package-release.outputs.release_tag }}
-          GHCR_USERNAME: ${{ secrets.GHCR_USERNAME != '' && secrets.GHCR_USERNAME || github.actor }}
-          GHCR_PASSWORD: ${{ secrets.GHCR_PASSWORD != '' && secrets.GHCR_PASSWORD || github.token }}
-          GHCR_AUTH_SOURCE: ${{ secrets.GHCR_PASSWORD != '' && 'secrets.GHCR_PASSWORD' || 'github.token' }}
+          GHCR_USERNAME: ${{ github.actor }}
+          GHCR_PASSWORD: ${{ github.token }}
+          GHCR_AUTH_SOURCE: github.token
         run: |
           set -euo pipefail
 
