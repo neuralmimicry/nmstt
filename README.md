@@ -75,6 +75,10 @@ RUSTFLAGS="-C target-cpu=native" cargo build --release
 - `GET /health`
 - `POST /transcribe`
 - `POST /gesture-plan`
+- `POST /synthesize`: text-to-speech. JSON `{"text": "...", "voice"?: "en_GB-alan-medium", "speed"?: 0.5-2.0}` returns `audio/wav` (16-bit mono). Errors are JSON `{"error"}`: 400 bad input, 404 unknown voice, 503 busy or disabled, 504 timeout.
+- `GET /voices`: `{"enabled", "default", "voices": [...]}`
+
+Text-to-speech uses [Piper](https://github.com/rhasspy/piper), run as a bounded subprocess per request: `NMSTT_TTS_WORKERS` concurrent syntheses (default 2), `NMSTT_TTS_TIMEOUT_MS` (30000), `NMSTT_TTS_QUEUE_TIMEOUT_MS` (10000) and `NMSTT_TTS_MAX_CHARS` (2000). Voices are `<name>.onnx` + `<name>.onnx.json` files in `NMSTT_TTS_VOICE_DIR` (default `/app/voices`); the container image ships `en_GB-alan-medium`. TTS is enabled when the voice directory exists, or explicitly with `NMSTT_TTS_ENABLED`.
 
 The response contract intentionally remains Refiner-compatible so existing frontend and backend consumers do not need a second parser.
 
